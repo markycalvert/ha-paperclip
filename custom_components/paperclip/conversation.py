@@ -25,15 +25,14 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity import Entity
     from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+    from .api import Comment
     from .data import PaperclipConfigEntry
 
 PARALLEL_UPDATES = 0
 ASSIST_FOOTER = "\n\n_Sent from Home Assistant Assist._"
 
 FALLBACK_TEXT = {
-    "reply_pending": (
-        "Sent to {agent} as {identifier}. I'll let you know when they reply."
-    ),
+    "reply_pending": "Sent to {agent} as {identifier}. The reply will be in Paperclip.",
     "conversation_failed": "Sorry, I could not reach Paperclip: {error}",
 }
 
@@ -106,9 +105,9 @@ class PaperclipConversationEntity(
                 tracked, comment = await coordinator.async_comment(
                     issue_id, user_input.text
                 )
-                after_comment_id: str | None = comment.id
+                after: Comment | None = comment
             else:
-                tracked = await coordinator.async_create_tracked_issue(
+                tracked, _ = await coordinator.async_create_tracked_issue(
                     title=shorten(user_input.text, TITLE_MAX_LENGTH),
                     description=user_input.text + ASSIST_FOOTER,
                     agent_id=self.agent_id,
@@ -119,7 +118,7 @@ class PaperclipConversationEntity(
                 coordinator.tracker.link_conversation(
                     conversation_id, tracked.id, self.agent_id
                 )
-                after_comment_id = None
+                after = None
         except PaperclipError as err:
             LOGGER.warning("Could not send the request to Paperclip: %s", err)
             response = intent.IntentResponse(language=user_input.language)
@@ -139,7 +138,7 @@ class PaperclipConversationEntity(
         reply = await coordinator.async_wait_for_reply(
             tracked,
             options.get(CONF_REPLY_WAIT, DEFAULT_REPLY_WAIT),
-            after_comment_id=after_comment_id,
+            after=after,
         )
         if reply is not None:
             text = reply.body

@@ -9,7 +9,6 @@ import pytest
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.const import (
     CONF_API_KEY,
-    CONF_SCAN_INTERVAL,
     CONF_URL,
     CONF_VERIFY_SSL,
 )
@@ -308,7 +307,6 @@ async def test_options_flow(
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
-            CONF_SCAN_INTERVAL: 30.0,
             CONF_REPLY_WAIT: 45.0,
             CONF_ALLOW_APPROVALS: True,
             CONF_DEFAULT_PROJECT: PROJECT_ID,
@@ -316,7 +314,6 @@ async def test_options_flow(
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert mock_config_entry.options == {
-        CONF_SCAN_INTERVAL: 30,
         CONF_REPLY_WAIT: 45,
         CONF_ALLOW_APPROVALS: True,
         CONF_DEFAULT_PROJECT: PROJECT_ID,
@@ -331,7 +328,6 @@ async def test_options_flow_resolves_typed_project(
     await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
     options = {
-        CONF_SCAN_INTERVAL: 60,
         CONF_REPLY_WAIT: 20,
         CONF_ALLOW_APPROVALS: False,
     }
@@ -362,7 +358,6 @@ async def test_options_flow_typed_name_needs_a_loaded_entry(
     """Without a loaded entry only a project id or no project can be stored."""
     mock_config_entry.add_to_hass(hass)
     options = {
-        CONF_SCAN_INTERVAL: 60,
         CONF_REPLY_WAIT: 20,
         CONF_ALLOW_APPROVALS: False,
     }

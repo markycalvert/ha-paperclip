@@ -25,6 +25,7 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.paperclip.const import (
     CONF_ALLOW_APPROVALS,
+    CONF_COMPANY_ID,
     CONF_DEFAULT_PROJECT,
     DOMAIN,
     EVENT_AGENT_REPLIED,
@@ -37,6 +38,8 @@ from .conftest import (
     COMPANY_ID,
     ENGINEER_ID,
     HOME_OPS_ID,
+    OTHER_AGENT_ID,
+    OTHER_COMPANY_ID,
     PROJECT_ID,
     PUBLIC_ID,
     RUNNING_ISSUE_ID,
@@ -708,3 +711,168 @@ async def test_new_project_is_found_without_reload(
     )
     body = fake.calls_to("POST", f"/api/companies/{COMPANY_ID}/issues")[-1][3]
     assert body["projectId"] == new_project
+
+
+async def _second_company(
+    hass: HomeAssistant, first: MockConfigEntry
+) -> MockConfigEntry:
+    """Add an entry for the server's second company."""
+    second = MockConfigEntry(
+        domain=DOMAIN,
+        title="Globex",
+        unique_id=OTHER_COMPANY_ID,
+        data={**first.data, CONF_COMPANY_ID: OTHER_COMPANY_ID},
+        options=dict(first.options),
+    )
+    second.add_to_hass(hass)
+    await hass.config_entries.async_setup(second.entry_id)
+    await hass.async_block_till_done()
+    return second
+
+
+async def test_agent_device_of_another_entry_is_refused(
+    hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
+) -> None:
+    """An agent device must belong to the entry the action names."""
+    second = await _second_company(hass, init_integration)
+    gardener = _agent_device(hass, second, OTHER_AGENT_ID)
+    first_id = init_integration.entry_id
+    for service, data in (
+        ("create_issue", {"title": "Mow the lawn", "assignee": gardener}),
+        ("ask_agent", {"agent": gardener, "message": "Mow the lawn"}),
+        ("wake_agent", {"agent": gardener}),
+    ):
+        with pytest.raises(ServiceValidationError) as err:
+            await _call(hass, service, {"config_entry_id": first_id, **data})
+        assert err.value.translation_key == "agent_wrong_entry"
+        assert err.value.translation_placeholders == {
+            "agent": "Gardener",
+            "title": "Globex",
+        }
+    assert not [call for call in fake.calls if call[0] == "POST"]
+
+    # Without an entry, or with its own entry, the device picks its company.
+    response = await _call(hass, "wake_agent", {"agent": gardener})
+    assert response["agent_id"] == OTHER_AGENT_ID
+    response = await _call(
+        hass, "wake_agent", {"agent": gardener, "config_entry_id": second.entry_id}
+    )
+    assert response["agent_id"] == OTHER_AGENT_ID
+
+
+async def test_create_issue_duplicate_of_another_agent(
+    hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
+) -> None:
+    """A title match on another agent's open issue is not reported as success."""
+    entry_id = init_integration.entry_id
+    first = await _call(
+        hass,
+        "create_issue",
+        {"config_entry_id": entry_id, "title": "Check the gate", "assignee": "CEO"},
+    )
+    assert first["deduplicated"] is False
+    with pytest.raises(ServiceValidationError) as err:
+        await _call(
+            hass,
+            "create_issue",
+            {
+                "config_entry_id": entry_id,
+                "title": "Check the gate",
+                "assignee": "Engineer",
+            },
+        )
+    assert err.value.translation_key == "duplicate_issue_other_assignee"
+    assert err.value.translation_placeholders == {
+        "identifier": first["identifier"],
+        "agent": "Engineer",
+    }
+    tracker = init_integration.runtime_data.coordinator.tracker
+    assert tracker.issues[first["issue_id"]].agent_id == CEO_ID
+
+    # Without an assignee the existing issue is returned with its real assignee.
+    again = await _call(
+        hass, "create_issue", {"config_entry_id": entry_id, "title": "Check the gate"}
+    )
+    assert again["issue_id"] == first["issue_id"]
+    assert again["deduplicated"] is True
+    assert again["assignee_agent_id"] == CEO_ID
+
+
+@pytest.mark.parametrize(
+    "approval_id",
+    ["../agents/33333333-3333-4333-8333-333333333333/pause?a=", "not-a-uuid", ""],
+)
+async def test_approval_id_must_be_a_uuid(
+    hass: HomeAssistant,
+    fake: FakePaperclip,
+    mock_config_entry: MockConfigEntry,
+    approval_id: str,
+) -> None:
+    """An approval id that is not a UUID never reaches Paperclip."""
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options={**mock_config_entry.options, CONF_ALLOW_APPROVALS: True},
+    )
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    with pytest.raises((ServiceValidationError, probatio.Invalid)) as err:
+        await _call(
+            hass,
+            "approve",
+            {
+                "config_entry_id": mock_config_entry.entry_id,
+                "approval_id": approval_id,
+            },
+        )
+    if isinstance(err.value, ServiceValidationError):
+        assert err.value.translation_key == "invalid_approval_id"
+    assert not [call for call in fake.calls if call[0] == "POST"]
+
+
+async def test_approval_of_another_company_is_refused(
+    hass: HomeAssistant, fake: FakePaperclip, mock_config_entry: MockConfigEntry
+) -> None:
+    """The approvals option of one entry cannot decide another company's approval."""
+    foreign = "99999999-9999-4999-8999-999999999998"
+    revised = "99999999-9999-4999-8999-999999999997"
+    fake.approvals += [
+        {**fake.approvals[0], "id": foreign, "companyId": OTHER_COMPANY_ID},
+        {**fake.approvals[0], "id": revised, "status": "revision_requested"},
+    ]
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options={**mock_config_entry.options, CONF_ALLOW_APPROVALS: True},
+    )
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    entry_id = mock_config_entry.entry_id
+
+    with pytest.raises(ServiceValidationError) as err:
+        await _call(
+            hass, "approve", {"config_entry_id": entry_id, "approval_id": foreign}
+        )
+    assert err.value.translation_key == "approval_wrong_company"
+    assert not fake.calls_to("POST", f"/api/approvals/{foreign}/approve")
+
+    with pytest.raises(ServiceValidationError) as err:
+        await _call(
+            hass,
+            "reject",
+            {
+                "config_entry_id": entry_id,
+                "approval_id": "99999999-9999-4999-8999-999999999990",
+            },
+        )
+    assert err.value.translation_key == "not_found"
+
+    # This company's approval that is not pending (revision requested) is
+    # checked with the server, then decided.
+    response = await _call(
+        hass,
+        "approve",
+        {"config_entry_id": entry_id, "approval_id": revised.upper()},
+    )
+    assert response == {"approval_id": revised, "status": "approved"}
+    assert fake.calls_to("GET", f"/api/approvals/{revised}")

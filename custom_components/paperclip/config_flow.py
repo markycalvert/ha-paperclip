@@ -12,7 +12,6 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import (
     CONF_API_KEY,
-    CONF_SCAN_INTERVAL,
     CONF_URL,
     CONF_VERIFY_SSL,
 )
@@ -47,12 +46,9 @@ from .const import (
     CONF_DEFAULT_PROJECT,
     CONF_REPLY_WAIT,
     DEFAULT_REPLY_WAIT,
-    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     LOGGER,
     MAX_REPLY_WAIT,
-    MAX_SCAN_INTERVAL,
-    MIN_SCAN_INTERVAL,
     NO_PROJECT,
 )
 from .coordinator import UUID_RE
@@ -297,7 +293,7 @@ class PaperclipConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class PaperclipOptionsFlow(OptionsFlowWithReload):
-    """Tune polling, replies, approvals and the default project."""
+    """Tune replies, approvals and the default project."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -316,7 +312,6 @@ class PaperclipOptionsFlow(OptionsFlowWithReload):
                 return self.async_create_entry(
                     data={
                         **user_input,
-                        CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
                         CONF_REPLY_WAIT: int(user_input[CONF_REPLY_WAIT]),
                         CONF_DEFAULT_PROJECT: project,
                     }
@@ -336,17 +331,6 @@ class PaperclipOptionsFlow(OptionsFlowWithReload):
         )
         schema = probatio.Schema(
             {
-                probatio.Required(
-                    CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=MIN_SCAN_INTERVAL,
-                        max=MAX_SCAN_INTERVAL,
-                        step=1,
-                        unit_of_measurement="s",
-                        mode=NumberSelectorMode.BOX,
-                    )
-                ),
                 probatio.Required(
                     CONF_REPLY_WAIT, default=DEFAULT_REPLY_WAIT
                 ): NumberSelector(

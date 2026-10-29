@@ -18,9 +18,9 @@ CONF_REPLY_WAIT: Final = "reply_wait"
 CONF_ALLOW_APPROVALS: Final = "allow_approvals"
 CONF_DEFAULT_PROJECT: Final = "default_project"
 
+# Polling interval in seconds. Not an option: users who need other timing
+# disable polling for the entry and call homeassistant.update_entity.
 DEFAULT_SCAN_INTERVAL: Final = 60
-MIN_SCAN_INTERVAL: Final = 15
-MAX_SCAN_INTERVAL: Final = 3600
 DEFAULT_REPLY_WAIT: Final = 20
 MAX_REPLY_WAIT: Final = 300
 NO_PROJECT: Final = "none"
@@ -41,10 +41,16 @@ MAX_TRACKED_ISSUES: Final = 200
 TRACK_CLOSED_FOR: Final = timedelta(days=1)
 TRACK_AT_MOST: Final = timedelta(days=30)
 POLL_COMMENTS_AFTER_CLOSE: Final = timedelta(hours=1)
-CONVERSATION_EXPIRY: Final = timedelta(hours=24)
+# Home Assistant drops a chat session after 5 idle minutes, and a turn can wait
+# up to MAX_REPLY_WAIT for a reply, so a link outlives any reusable session.
+CONVERSATION_EXPIRY: Final = timedelta(minutes=15)
 REPLY_POLL_INTERVAL: Final = 2.0
 COMMENT_FETCH_CONCURRENCY: Final = 4
 ISSUE_PAGE_SIZE: Final = 500
+# Issue updates are listed from this far before the cursor: Paperclip stamps
+# updatedAt before a transaction commits, so a change can appear after a later
+# one was already listed. Re-reading is harmless (statuses are diffed).
+ISSUE_UPDATE_OVERLAP: Final = timedelta(seconds=60)
 MAX_ISSUE_PAGES: Final = 10
 ISSUE_CACHE_SIZE: Final = 256
 

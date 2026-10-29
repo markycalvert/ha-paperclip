@@ -77,12 +77,20 @@ What happens:
 - The **first message** of a conversation creates an issue assigned to the
   agent (title: the first 60 characters of what you said).
 - **Follow-ups in the same conversation** are added as comments on that same
-  issue, which wakes the agent again.
+  issue, which wakes the agent again. Home Assistant keeps a conversation only
+  while it is in use: after about 5 minutes without a message, the next
+  message starts a new conversation, and so a new issue. Within those
+  minutes, even an unrelated request to the same agent from the same device
+  is added to the open issue.
 - Assist waits up to the **conversation reply wait** (default 20 s) for the
   agent's comment and speaks it. If the agent is slower, Assist answers
-  "Sent to Home Ops as ACME-12. I'll let you know when they reply." The reply
+  "Sent to Home Ops as ACME-12. The reply will be in Paperclip." The reply
   then arrives as a [`paperclip_agent_replied`](#paperclip_agent_replied)
-  event, which an automation can turn into a notification.
+  event. Nothing tells you about it unless you add an automation such as
+  [Get late replies as notifications](#get-late-replies-as-notifications).
+- To answer a late reply, use `paperclip.add_comment` with the issue
+  identifier from the event (see the example below). Speaking to Assist again
+  after the conversation ended starts a new issue without the earlier context.
 
 You can create several assistants, each with a different Paperclip agent, and
 give each its own wake word.
@@ -132,7 +140,27 @@ automation:
           message: "{{ trigger.event.data.body[:500] }}"
           data:
             url: "{{ trigger.event.data.url }}"
+            actions:
+              - action: "PAPERCLIP_REPLY_{{ trigger.event.data.identifier }}"
+                title: Reply
+                behavior: textInput
+
+  - alias: "Answer a Paperclip reply from the notification"
+    triggers:
+      - trigger: event
+        event_type: mobile_app_notification_action
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.event.data.action.startswith('PAPERCLIP_REPLY_') }}"
+    actions:
+      - action: paperclip.add_comment
+        data:
+          config_entry_id: 01J0000000000000000000000 # your Paperclip entry
+          issue: "{{ trigger.event.data.action[16:] }}"
+          message: "{{ trigger.event.data.reply_text }}"
 ```
+
+The comment continues the same issue, so the agent sees the whole thread.
 
 ## Requirements
 
@@ -144,14 +172,18 @@ automation:
   or pause agents. Agent API keys are not supported.
 
   Paperclip has no web page for board keys. Create one with the Paperclip CLI
-  while logged in as that user:
+  (Node.js), on any computer that can reach the server. Log in as that user
+  first (this opens the browser to approve the login), then create the key:
 
   ```bash
-  paperclipai token board create --name "Home Assistant" --never-expires
+  npx paperclipai auth login --api-base http://paperclip.local:3100
+  npx paperclipai token board create --api-base http://paperclip.local:3100 --name "Home Assistant" --never-expires
   ```
 
-  Keys created without `--never-expires` expire after 30 days; Home Assistant
-  then asks you to re-authenticate.
+  Use your server's address for `--api-base` (without `/api`). Copy the
+  `token` value from the output (it starts with `pcp_board_`). Keys created
+  without `--never-expires` expire after 30 days; Home Assistant then asks you
+  to re-authenticate.
 
 - A server in Paperclip's `local_trusted` mode needs no key, but that mode only
   listens on the loopback interface, so it only works when Home Assistant runs
@@ -160,7 +192,10 @@ automation:
 > **Private hostname guard.** A private Paperclip server only answers requests
 > for host names it knows. If setup says the hostname is not allowed, run
 > `npx paperclipai allowed-hostname paperclip.local` on the Paperclip server
-> (with the host name or IP address you entered in Home Assistant).
+> (with the host name or IP address you entered in Home Assistant), then
+> **restart Paperclip**: it reads the list only when it starts. In Docker, set
+> the environment variable `PAPERCLIP_ALLOWED_HOSTNAMES=paperclip.local`
+> (comma-separated for several) and recreate the container instead.
 
 ## Installation
 
@@ -208,7 +243,6 @@ Paperclip rejects the key, Home Assistant starts a re-authentication flow.
 
 | Option | Default | Description |
 |---|---|---|
-| Polling interval | 60 s (min 15) | How often Home Assistant asks Paperclip for updates. |
 | Conversation reply wait | 20 s (0 to 300) | How long an Assist conversation waits for the agent's reply. |
 | Allow approvals from Home Assistant | off | Lets `paperclip.approve` and `paperclip.reject` decide approvals. |
 | Default project | none | Project for issues created from Home Assistant when an action does not name one. Pick it from the list, or type its name or id; a typed name is checked and stored as the project id. |
@@ -299,6 +333,9 @@ reply: "Two jobs failed: ..."
 reply_comment_id: 66666666-6666-4666-8666-666666666666
 ```
 
+`reply` holds the first 2000 characters of the agent's comment; open `url` for
+the full text. Assist speaks the whole comment.
+
 Each call creates a new issue, even with the same text as an earlier one.
 
 ### `paperclip.add_comment`
@@ -325,7 +362,7 @@ response_variable: answer
 ```
 
 Response: `comment_id`, `issue_id`, `identifier`, `url`, `status`, `replied`,
-`reply`, `reply_comment_id`.
+`reply` (the first 2000 characters of the agent's comment), `reply_comment_id`.
 
 ### `paperclip.create_issue`
 
@@ -334,10 +371,10 @@ Response: `comment_id`, `issue_id`, `identifier`, `url`, `status`, `replied`,
 | `config_entry_id` | yes | The Paperclip entry (company). |
 | `title` | yes | Issue title. |
 | `description` | no | Markdown description. |
-| `assignee` | no | Agent device, id or name. Without one the issue goes to the backlog and no agent is woken. |
+| `assignee` | no | Agent device, id or name. It must be an agent of the company in `config_entry_id`; the picker also lists agents of other entries, and those are refused. Without one the issue goes to the backlog and no agent is woken. |
 | `project` | no | Project id or name. |
 | `priority` | no | `critical`, `high`, `medium` or `low`. |
-| `allow_duplicate` | no (default false) | Paperclip returns an existing open issue with the same title from the last 48 hours instead of creating a new one, unless this is on. Comments already on such an issue are not reported as new replies. |
+| `allow_duplicate` | no (default false) | Paperclip returns an existing open issue with the same title from the last 48 hours instead of creating a new one, unless this is on. Paperclip matches the title only, so if that issue is assigned to a different agent than `assignee`, the action fails instead (nothing is created or assigned). Comments already on such an issue are not reported as new replies. |
 
 ```yaml
 action: paperclip.create_issue
@@ -349,7 +386,9 @@ data:
 response_variable: issue
 ```
 
-Response: `issue_id`, `identifier`, `url`, `status`, `assignee_agent_id`.
+Response: `issue_id`, `identifier`, `url`, `status`, `assignee_agent_id` (the
+issue's actual assignee), `deduplicated` (`true` when Paperclip returned an
+existing issue).
 
 ### `paperclip.wake_agent`
 
@@ -364,7 +403,7 @@ the wake into existing work). A paused agent cannot be woken.
 ### `paperclip.fire_routine_webhook`
 
 Fires a Paperclip routine's webhook trigger. The request is signed with
-HMAC-SHA256 over `"<unix timestamp>.<raw body>"` and sent with the headers
+HMAC-SHA256 over `"<unix time in milliseconds>.<raw body>"` and sent with the headers
 `X-Paperclip-Timestamp` and `X-Paperclip-Signature: sha256=<hex>`. The board
 API key is **not** sent; only the trigger's own secret counts.
 
@@ -374,7 +413,7 @@ API key is **not** sent; only the trigger's own secret counts.
 | `public_id` | yes | The trigger's public id (24 hex characters) or its full webhook URL. |
 | `secret` | for signed triggers | The trigger's webhook secret. Set the trigger's signing mode to **HMAC SHA-256** in Paperclip. Leave empty only for unsigned triggers. |
 | `payload` | no | JSON object sent as the body. Top-level fields or a nested `variables` object fill the routine's variables. |
-| `idempotency_key` | no | Stops Paperclip from running the same delivery twice. |
+| `idempotency_key` | no | Only for unsigned (`none`) triggers: Paperclip runs a delivery with the same key once. Signed (`hmac_sha256`) triggers ignore it; there each call is a new delivery, and only an exact re-send of the same signed request is refused (HTTP 409, "Webhook replay detected"). |
 
 ```yaml
 action: paperclip.fire_routine_webhook
@@ -390,7 +429,9 @@ response_variable: run
 ```
 
 Response: `http_status` (202), `status` (`issue_created`, `coalesced`,
-`skipped` or `failed`), `run_id`, `linked_issue_id`. A rejected secret raises an
+`skipped`, `failed`, or `test_received` while the trigger is still being set up
+in Paperclip, when no run starts and `run_id` and `linked_issue_id` are empty),
+`run_id`, `linked_issue_id`. A rejected secret raises an
 error with the HTTP status. Paperclip's default signing mode for new webhook
 triggers is `bearer`; this action supports `hmac_sha256` (and unsigned
 triggers), so switch the trigger to HMAC.
@@ -398,12 +439,14 @@ triggers), so switch the trigger to HMAC.
 ### `paperclip.approve` and `paperclip.reject`
 
 Only work when **Allow approvals from Home Assistant** is on for the entry;
-otherwise they fail with a clear error.
+otherwise they fail with a clear error. The approval must belong to that
+entry's company: an approval of another company is refused, even when the
+board key could decide it.
 
 | Field | Required | Description |
 |---|---|---|
 | `config_entry_id` | yes | The Paperclip entry (company); the event carries it. |
-| `approval_id` | yes | From the `paperclip_approval_requested` event. |
+| `approval_id` | yes | The approval's UUID, from the `paperclip_approval_requested` event. |
 | `decision_note` | no | Stored with the decision. |
 
 Response: `approval_id`, `status`.
@@ -513,12 +556,18 @@ automation:
 
 ## How data is updated
 
-The integration polls Paperclip every 60 seconds by default (option). Each
-poll reads the server health, the company, its agents, the dashboard counts,
-pending approvals and live runs (about six requests), plus the comments of
-issues the integration follows. While an action or Assist waits for a reply it
-checks that issue every 2 seconds. Pausing, resuming, waking or deciding an
-approval triggers an immediate refresh.
+The integration polls Paperclip every 60 seconds. Each poll reads the server
+health, the company, its agents, the dashboard counts, pending approvals and
+live runs (about six requests), plus one request per issue the integration
+follows (more only when it has new comments). While an action or Assist waits
+for a reply it checks that issue every 2 seconds. Pausing, resuming, waking or
+deciding an approval triggers an immediate refresh.
+
+To poll on your own schedule instead, open the Paperclip entry's three-dot
+menu, choose **System options**, turn off **Enable polling for changes**, and
+run the `homeassistant.update_entity` action on any Paperclip entity from an
+automation whenever you want fresh data (see
+[Defining a custom polling interval](https://www.home-assistant.io/common-tasks/general/#defining-a-custom-polling-interval)).
 
 ## Security notes
 
@@ -529,7 +578,8 @@ approval triggers an immediate refresh.
   it needs, and revoke the key in Paperclip if it leaks.
 - **Approvals are off by default.** Turning them on lets anyone who can run
   actions in Home Assistant (including automations and any LLM agent that may
-  call actions) approve hires, strategies and budget overrides.
+  call actions) approve hires, strategies and budget overrides in that entry's
+  company. Approvals of other companies stay refused.
 - **What data goes where**: requests go only to the Paperclip server you
   configured. What you say to a Paperclip conversation agent is stored in
   Paperclip as an issue and comments, and Paperclip passes it to whichever AI
@@ -554,13 +604,17 @@ approval triggers an immediate refresh.
   Paperclip's reason; it does not ask you to re-authenticate.
 - Approval events only fire for approvals that appear while Home Assistant is
   running.
+- An Assist conversation continues the same issue only while Home Assistant
+  keeps the conversation (about 5 minutes without a message).
 - Routine webhooks are supported in `hmac_sha256` and unsigned modes, not
   `bearer`.
 
 ## Troubleshooting
 
 - **"Paperclip refused this hostname"**: allow the host you entered with
-  `npx paperclipai allowed-hostname <host>` on the Paperclip server.
+  `npx paperclipai allowed-hostname <host>` on the Paperclip server, then
+  restart Paperclip (it reads the list only at start). In Docker, set
+  `PAPERCLIP_ALLOWED_HOSTNAMES=<host>` and recreate the container.
 - **"That is an agent API key"**: use a board key (`pcp_board_…`).
 - **Re-authentication keeps appearing**: the key expired (default 30 days) or
   was revoked. Create one with `--never-expires`.
@@ -588,7 +642,7 @@ approval triggers an immediate refresh.
    `<config>/custom_components/paperclip`.
 3. Restart Home Assistant.
 4. Revoke the board API key in Paperclip if you no longer need it
-   (`paperclipai token board revoke <key id>` or `DELETE /api/board-api-keys/<key id>`).
+   (`npx paperclipai token board revoke <key id>` or `DELETE /api/board-api-keys/<key id>`).
 
 ## Compatibility
 

@@ -65,7 +65,7 @@ from .const import (
     SERVICE_WAKE_AGENT,
     TITLE_MAX_LENGTH,
 )
-from .coordinator import PaperclipCoordinator, shorten, truncate
+from .coordinator import UUID_RE, PaperclipCoordinator, shorten, truncate
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
@@ -159,12 +159,26 @@ def _loaded_entries(hass: HomeAssistant) -> list[PaperclipConfigEntry]:
 def _resolve_agent(
     hass: HomeAssistant, agent_ref: str, entry_id: str | None
 ) -> tuple[PaperclipConfigEntry, str]:
-    """Resolve an agent device id, agent id or agent name to (entry, agent id)."""
+    """
+    Resolve an agent device id, agent id or agent name to (entry, agent id).
+
+    With ``entry_id``, the agent must belong to that entry: an agent device of
+    another Paperclip entry (another company) is refused.
+    """
     if dr.async_get(hass).async_get(agent_ref) is not None:
         device, entry = service.async_get_device_and_config_entry(
             hass, DOMAIN, agent_ref, include_child_devices=False
         )
         paperclip_entry = cast("PaperclipConfigEntry", entry)
+        if entry_id and paperclip_entry.entry_id != entry_id:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="agent_wrong_entry",
+                translation_placeholders={
+                    "agent": device.name or agent_ref,
+                    "title": paperclip_entry.title,
+                },
+            )
         agents = paperclip_entry.runtime_data.coordinator.data.agents
         for domain, value in device.identifiers:
             if domain == DOMAIN and value in agents:
@@ -254,6 +268,7 @@ def _issue_response(
 
 
 def _reply_response(reply: Comment | None) -> dict[str, Any]:
+    # The reply is cut like the event body; the issue URL has the full text.
     return {
         "replied": reply is not None,
         "reply": truncate(reply.body, REPLY_MAX_LENGTH) if reply else None,
@@ -268,7 +283,7 @@ async def _async_ask_agent(call: ServiceCall) -> ServiceResponse:
     coordinator = entry.runtime_data.coordinator
     message: str = call.data[ATTR_MESSAGE]
     project_id = await _project_id(entry, call.data.get(ATTR_PROJECT))
-    tracked = await _call(
+    tracked, _ = await _call(
         entry,
         coordinator.async_create_tracked_issue(
             title=call.data.get(ATTR_TITLE) or shorten(message, TITLE_MAX_LENGTH),
@@ -301,7 +316,7 @@ async def _async_create_issue(call: ServiceCall) -> ServiceResponse:
     if assignee := call.data.get(ATTR_ASSIGNEE):
         _, agent_id = _resolve_agent(call.hass, assignee, entry.entry_id)
     project_id = await _project_id(entry, call.data.get(ATTR_PROJECT))
-    tracked = await _call(
+    tracked, deduplicated = await _call(
         entry,
         coordinator.async_create_tracked_issue(
             title=call.data[ATTR_TITLE],
@@ -314,7 +329,11 @@ async def _async_create_issue(call: ServiceCall) -> ServiceResponse:
     )
     if not call.return_response:
         return None
-    return {**_issue_response(coordinator, tracked), "assignee_agent_id": agent_id}
+    return {
+        **_issue_response(coordinator, tracked),
+        "assignee_agent_id": tracked.agent_id,
+        "deduplicated": deduplicated,
+    }
 
 
 async def _async_add_comment(call: ServiceCall) -> ServiceResponse:
@@ -326,7 +345,7 @@ async def _async_add_comment(call: ServiceCall) -> ServiceResponse:
     if not call.return_response:
         return None
     reply = await coordinator.async_wait_for_reply(
-        tracked, call.data[ATTR_WAIT_FOR_REPLY], after_comment_id=comment.id
+        tracked, call.data[ATTR_WAIT_FOR_REPLY], after=comment
     )
     return {
         "comment_id": comment.id,
@@ -402,12 +421,29 @@ async def _async_decide(call: ServiceCall, *, approve: bool) -> ServiceResponse:
             translation_key="approvals_disabled",
             translation_placeholders={"title": entry.title},
         )
+    approval_id: str = call.data[ATTR_APPROVAL_ID].strip().lower()
+    if not UUID_RE.match(approval_id):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="invalid_approval_id"
+        )
     client = entry.runtime_data.client
+    coordinator = entry.runtime_data.coordinator
+    # A board key can decide approvals in every company its user belongs to,
+    # but the option above only allows this entry's company.
+    pending = coordinator.data.approvals or []
+    if not any(item.id == approval_id for item in pending):
+        found = await _call(entry, client.get_approval(approval_id))
+        if found.company_id != coordinator.company_id:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="approval_wrong_company",
+                translation_placeholders={"title": entry.title},
+            )
     decide = client.approve if approve else client.reject
     approval = await _call(
-        entry, decide(call.data[ATTR_APPROVAL_ID], call.data.get(ATTR_DECISION_NOTE))
+        entry, decide(approval_id, call.data.get(ATTR_DECISION_NOTE))
     )
-    await entry.runtime_data.coordinator.async_request_refresh()
+    await coordinator.async_request_refresh()
     if not call.return_response:
         return None
     return {"approval_id": approval.id, "status": approval.status}

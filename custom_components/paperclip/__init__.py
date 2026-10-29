@@ -104,7 +104,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: PaperclipConfigEntry) -
     """Unload a config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        await entry.runtime_data.coordinator.tracker.async_flush()
+        coordinator = entry.runtime_data.coordinator
+        # Reply waits still running in an action or an Assist turn belong to
+        # this coordinator: end them, so that after a reload they cannot fire
+        # replies a second time or save over the new entry's tracking data.
+        coordinator.async_stop_waits()
+        await coordinator.tracker.async_close()
     return unloaded
 
 

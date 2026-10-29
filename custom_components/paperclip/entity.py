@@ -79,6 +79,7 @@ class PaperclipAgentEntity(CoordinatorEntity[PaperclipCoordinator]):
             name=agent.name,
             manufacturer=MANUFACTURER,
             model=agent_model(agent),
+            entry_type=DeviceEntryType.SERVICE,
             configuration_url=coordinator.agent_url(agent),
             via_device_id=company_device_id,
         )

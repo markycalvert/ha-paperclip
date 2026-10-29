@@ -73,7 +73,7 @@ async def test_first_message_creates_issue_and_reply_is_spoken(
     assert comment_calls[0][3] == {"body": "Turn on the porch light too."}
     assert len(fake.calls_to("POST", f"/api/companies/{COMPANY_ID}/issues")) == 1
     assert follow_up.response.speech["plain"]["speech"] == (
-        "Sent to Home Ops as ACME-43. I'll let you know when they reply."
+        "Sent to Home Ops as ACME-43. The reply will be in Paperclip."
     )
 
 
@@ -86,7 +86,7 @@ async def test_reply_arrives_later_as_event(
     events = async_capture_events(hass, EVENT_AGENT_REPLIED)
     result = await _say(hass, "Order more coffee beans")
     speech = result.response.speech["plain"]["speech"]
-    assert speech == "Sent to Home Ops as ACME-43. I'll let you know when they reply."
+    assert speech == "Sent to Home Ops as ACME-43. The reply will be in Paperclip."
     assert events == []
 
     issue = next(i for i in fake.issues.values() if i["identifier"] == "ACME-43")

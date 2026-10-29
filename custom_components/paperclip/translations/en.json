@@ -11,7 +11,7 @@
         },
         "data_description": {
           "url": "The base URL you open Paperclip at, without `/api`.",
-          "api_key": "A board API key (starts with `pcp_board_`), created with `paperclipai token board create --never-expires`. Leave empty for a `local_trusted` server. Agent keys are not supported.",
+          "api_key": "A board API key (starts with `pcp_board_`), created with `npx paperclipai token board create --never-expires` after `npx paperclipai auth login`. Leave empty for a `local_trusted` server. Agent keys are not supported.",
           "verify_ssl": "Turn off only for an HTTPS server with a self-signed certificate."
         }
       },
@@ -55,7 +55,7 @@
       "invalid_auth": "Paperclip rejected the key, or the key has no access to any company.",
       "invalid_url": "Enter a full http:// or https:// URL.",
       "agent_key": "That is an agent API key. Use a board API key (it starts with `pcp_board_`).",
-      "hostname_not_allowed": "Paperclip refused this hostname. On the Paperclip server run `npx paperclipai allowed-hostname HOSTNAME` with the host you entered, then try again.",
+      "hostname_not_allowed": "Paperclip refused this hostname. On the Paperclip server run `npx paperclipai allowed-hostname HOSTNAME` with the host you entered (in Docker, set `PAPERCLIP_ALLOWED_HOSTNAMES` instead), restart Paperclip, then try again.",
       "no_companies": "The key works, but it cannot open any company.",
       "company_not_found": "The key cannot open the company this entry was set up for.",
       "unknown": "Unexpected error. See the Home Assistant log for details."
@@ -72,13 +72,11 @@
       "init": {
         "title": "Paperclip options",
         "data": {
-          "scan_interval": "Polling interval",
           "reply_wait": "Conversation reply wait",
           "allow_approvals": "Allow approvals from Home Assistant",
           "default_project": "Default project"
         },
         "data_description": {
-          "scan_interval": "How often to poll Paperclip, in seconds (15 or more).",
           "reply_wait": "How long an Assist conversation waits for the agent's reply before answering that the request was sent.",
           "allow_approvals": "Lets the approve and reject actions decide Paperclip approvals. Anyone who can run actions in Home Assistant could then approve hires and budget overrides.",
           "default_project": "Project for issues created from Home Assistant when an action does not name one. Pick it from the list, or type a project name or ID."
@@ -182,7 +180,7 @@
       "message": "Paperclip rejected the board API key."
     },
     "hostname_not_allowed": {
-      "message": "Paperclip refused the hostname Home Assistant uses. Allow it on the server with `npx paperclipai allowed-hostname HOSTNAME`."
+      "message": "Paperclip refused the hostname Home Assistant uses. Allow it on the server with `npx paperclipai allowed-hostname HOSTNAME` (in Docker, set `PAPERCLIP_ALLOWED_HOSTNAMES`), then restart Paperclip."
     },
     "rate_limited": {
       "message": "Paperclip asked Home Assistant to slow down."
@@ -211,6 +209,18 @@
     "agent_ambiguous": {
       "message": "More than one Paperclip agent matches {agent}. Pick the agent device or give the config entry."
     },
+    "agent_wrong_entry": {
+      "message": "{agent} is an agent of {title}, not of the Paperclip entry chosen for this action. Pick an agent of that company."
+    },
+    "duplicate_issue_other_assignee": {
+      "message": "Paperclip returned the existing open issue {identifier} with the same title, which is not assigned to {agent}. Turn on \"Allow duplicate\" to create a new issue for {agent}."
+    },
+    "invalid_approval_id": {
+      "message": "The approval ID must be a Paperclip approval UUID, as sent in the paperclip_approval_requested event."
+    },
+    "approval_wrong_company": {
+      "message": "That approval does not belong to the Paperclip company of {title}. Use the entry of the company the approval belongs to."
+    },
     "not_found": {
       "message": "Paperclip could not find it: {error}"
     },
@@ -233,7 +243,7 @@
       "message": "Approvals from Home Assistant are turned off for {title}. Turn on \"Allow approvals from Home Assistant\" in the integration options first."
     },
     "reply_pending": {
-      "message": "Sent to {agent} as {identifier}. I'll let you know when they reply."
+      "message": "Sent to {agent} as {identifier}. The reply will be in Paperclip."
     },
     "conversation_failed": {
       "message": "Sorry, I could not reach Paperclip: {error}"
@@ -272,7 +282,7 @@
         },
         "wait_for_reply": {
           "name": "Wait for reply",
-          "description": "Seconds to wait for the agent's first comment (0 to 300). 0 returns at once. Only waits when the reply is used as response data."
+          "description": "Seconds to wait for the agent's first comment (0 to 300). 0 returns at once. Only waits when the reply is used as response data. The reply returned is cut to 2000 characters."
         },
         "config_entry_id": {
           "name": "Paperclip entry",
@@ -298,7 +308,7 @@
         },
         "assignee": {
           "name": "Assignee",
-          "description": "The agent device, or an agent ID or name. Leave empty for an unassigned backlog issue."
+          "description": "An agent of the chosen company: the agent device, or an agent ID or name. Leave empty for an unassigned backlog issue."
         },
         "project": {
           "name": "Project",
@@ -310,7 +320,7 @@
         },
         "allow_duplicate": {
           "name": "Allow duplicate",
-          "description": "Paperclip returns an existing open issue with the same title from the last 48 hours instead of creating a new one, unless this is on."
+          "description": "Paperclip returns an existing open issue with the same title from the last 48 hours instead of creating a new one, unless this is on. If that issue is assigned to another agent, the action fails."
         }
       }
     },
@@ -332,7 +342,7 @@
         },
         "wait_for_reply": {
           "name": "Wait for reply",
-          "description": "Seconds to wait for an agent comment after yours (0 to 300). Only waits when the reply is used as response data."
+          "description": "Seconds to wait for an agent comment after yours (0 to 300). Only waits when the reply is used as response data. The reply returned is cut to 2000 characters."
         }
       }
     },
@@ -376,7 +386,7 @@
         },
         "idempotency_key": {
           "name": "Idempotency key",
-          "description": "Optional key that stops Paperclip from running the same delivery twice."
+          "description": "Only for unsigned (`none`) triggers: Paperclip runs a delivery with the same key once. Signed triggers ignore it; each call is a new delivery."
         }
       }
     },

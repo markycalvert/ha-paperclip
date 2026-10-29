@@ -15,7 +15,6 @@ import aiohttp
 import pytest
 from homeassistant.const import (
     CONF_API_KEY,
-    CONF_SCAN_INTERVAL,
     CONF_URL,
     CONF_VERIFY_SSL,
 )
@@ -47,6 +46,9 @@ APPROVAL_ID = "99999999-9999-4999-8999-999999999999"
 PROJECT_ID = "77777777-7777-4777-8777-777777777777"
 RUNNING_ISSUE_ID = "55555555-5555-4555-8555-555555555500"
 PUBLIC_ID = "0123456789abcdef01234567"
+# A second company on the same server, with one agent of its own.
+OTHER_COMPANY_ID = "11111111-1111-4111-8111-111111111112"
+OTHER_AGENT_ID = "33333333-3333-4333-8333-333333333336"
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -69,6 +71,15 @@ class FakePaperclip:
         self.health: Any = load_json("health.json")
         self.companies: list[dict[str, Any]] = load_json("companies.json")
         self.agents: list[dict[str, Any]] = load_json("agents.json")
+        self.other_agents: list[dict[str, Any]] = [
+            {
+                **self.agents[2],
+                "id": OTHER_AGENT_ID,
+                "companyId": OTHER_COMPANY_ID,
+                "name": "Gardener",
+                "urlKey": "gardener",
+            }
+        ]
         self.dashboard: Any = load_json("dashboard.json")
         self.approvals: list[dict[str, Any]] = load_json("approvals.json")
         self.live_runs: list[dict[str, Any]] = load_json("live_runs.json")
@@ -179,7 +190,9 @@ class FakePaperclip:
                 return 200, self.dashboard
             if path == f"{company}/approvals":
                 return 200, [
-                    a for a in self.approvals if a["status"] == query["status"]
+                    a
+                    for a in self.approvals
+                    if a["status"] == query["status"] and a["companyId"] == COMPANY_ID
                 ]
             if path == f"{company}/live-runs":
                 return 200, self.live_runs
@@ -233,6 +246,35 @@ class FakePaperclip:
                     "linkedIssueId": RUNNING_ISSUE_ID,
                 }
         return 404, {"error": "Not found"}
+
+    def _route_approval(self, method: str, path: str) -> tuple[int, Any] | None:
+        """Answer GET /api/approvals/{id}; other approval routes are in _route."""
+        match = re.fullmatch(r"/api/approvals/([^/]+)", path)
+        if method != "GET" or match is None or (method, path) in self.overrides:
+            return None
+        approval = next((a for a in self.approvals if a["id"] == match.group(1)), None)
+        if approval is None:
+            return 404, {"error": "Approval not found"}
+        return 200, approval
+
+    def _route_other_company(
+        self, method: str, path: str, query: dict[str, str], body: Any
+    ) -> tuple[int, Any] | None:
+        """Answer the second company's own routes; the rest is served as Acme's."""
+        other = f"/api/companies/{OTHER_COMPANY_ID}"
+        if method == "GET" and path == other:
+            return 200, {
+                **self.companies[0],
+                "id": OTHER_COMPANY_ID,
+                "name": "Globex",
+                "issuePrefix": "GLO",
+            }
+        if method == "GET" and path == f"{other}/agents":
+            return 200, self.other_agents
+        if path.startswith(other):
+            company = f"/api/companies/{COMPANY_ID}"
+            return self._route(method, company + path.removeprefix(other), query, body)
+        return None
 
     def _list_issues(self, query: dict[str, str]) -> list[dict[str, Any]]:
         """
@@ -321,7 +363,11 @@ class FakePaperclip:
                 body = None
         query = dict(url.query)
         self.calls.append((method, url.path, query, body))
-        status, payload = self._route(method, url.path, query, body)
+        status, payload = (
+            self._route_approval(method, url.path)
+            or self._route_other_company(method, url.path, query, body)
+            or self._route(method, url.path, query, body)
+        )
         if status == 0:
             msg = "Connection refused"
             raise aiohttp.ClientConnectionError(msg)
@@ -375,7 +421,6 @@ def mock_config_entry() -> MockConfigEntry:
             CONF_COMPANY_ID: COMPANY_ID,
         },
         options={
-            CONF_SCAN_INTERVAL: 60,
             # Tests that expect no reply should not sleep on the real clock.
             CONF_REPLY_WAIT: 0.05,
             CONF_ALLOW_APPROVALS: False,

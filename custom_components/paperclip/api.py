@@ -115,6 +115,11 @@ def parse_datetime(value: Any) -> datetime | None:
     return parsed
 
 
+def _seg(value: str) -> str:
+    """Escape one path segment, so an id can never reach another route."""
+    return quote(value, safe="")
+
+
 def is_board_key(api_key: str) -> bool:
     """Return True if the key looks like a Paperclip board API key."""
     return api_key.startswith(BOARD_KEY_PREFIX)
@@ -246,6 +251,7 @@ class Approval:
     title: str
     requested_by_agent_id: str | None
     created_at: datetime | None
+    company_id: str | None = None
 
     @classmethod
     def from_dict(cls, data: JsonObject) -> Approval:
@@ -268,6 +274,7 @@ class Approval:
             title=f"{label}: {detail}" if detail else label,
             requested_by_agent_id=_opt_str(data, "requestedByAgentId"),
             created_at=parse_datetime(data.get("createdAt")),
+            company_id=_opt_str(data, "companyId"),
         )
 
 
@@ -534,23 +541,25 @@ class PaperclipClient:
 
     async def get_company(self, company_id: str) -> Company:
         """Get one company."""
-        return Company.from_dict(await self._get_object(f"/companies/{company_id}"))
+        return Company.from_dict(
+            await self._get_object(f"/companies/{_seg(company_id)}")
+        )
 
     async def list_agents(self, company_id: str) -> list[Agent]:
         """List non-terminated agents (the route rejects any query parameter)."""
-        rows = await self._get_list(f"/companies/{company_id}/agents")
+        rows = await self._get_list(f"/companies/{_seg(company_id)}/agents")
         return [Agent.from_dict(row) for row in rows]
 
     async def get_dashboard(self, company_id: str) -> Dashboard:
         """Get the dashboard summary counts."""
         return Dashboard.from_dict(
-            await self._get_object(f"/companies/{company_id}/dashboard")
+            await self._get_object(f"/companies/{_seg(company_id)}/dashboard")
         )
 
     async def list_pending_approvals(self, company_id: str) -> list[Approval]:
         """List pending approvals, oldest first."""
         rows = await self._get_list(
-            f"/companies/{company_id}/approvals", {"status": "pending"}
+            f"/companies/{_seg(company_id)}/approvals", {"status": "pending"}
         )
         approvals = [Approval.from_dict(row) for row in rows]
         epoch = datetime.min.replace(tzinfo=UTC)
@@ -558,7 +567,7 @@ class PaperclipClient:
 
     async def list_live_runs(self, company_id: str) -> list[LiveRun]:
         """List queued and running heartbeat runs."""
-        rows = await self._get_list(f"/companies/{company_id}/live-runs")
+        rows = await self._get_list(f"/companies/{_seg(company_id)}/live-runs")
         return [LiveRun.from_dict(row) for row in rows]
 
     async def list_issues_updated_since(
@@ -580,14 +589,12 @@ class PaperclipClient:
         }
         if offset:
             params["offset"] = str(offset)
-        rows = await self._get_list(f"/companies/{company_id}/issues", params)
+        rows = await self._get_list(f"/companies/{_seg(company_id)}/issues", params)
         return [Issue.from_dict(row) for row in rows]
 
     async def get_issue(self, issue_id: str) -> Issue:
         """Get one issue by UUID or identifier (for example ACME-12)."""
-        return Issue.from_dict(
-            await self._get_object(f"/issues/{quote(issue_id, safe='')}")
-        )
+        return Issue.from_dict(await self._get_object(f"/issues/{_seg(issue_id)}"))
 
     async def list_comments(
         self, issue_id: str, *, after: str | None = None, limit: int = 100
@@ -601,24 +608,28 @@ class PaperclipClient:
         params = {"order": "asc", "limit": str(limit)}
         if after:
             params["after"] = after
-        rows = await self._get_list(
-            f"/issues/{quote(issue_id, safe='')}/comments", params
-        )
+        rows = await self._get_list(f"/issues/{_seg(issue_id)}/comments", params)
         return [Comment.from_dict(row) for row in rows]
 
-    async def newest_comment_id(self, issue_id: str) -> str | None:
-        """Return the id of an issue's newest comment, or None if it has none."""
+    async def list_recent_comments(
+        self, issue_id: str, *, limit: int = 100
+    ) -> list[Comment]:
+        """List an issue's newest ``limit`` comments, returned oldest first."""
         rows = await self._get_list(
-            f"/issues/{quote(issue_id, safe='')}/comments",
-            {"order": "desc", "limit": "1"},
+            f"/issues/{_seg(issue_id)}/comments",
+            {"order": "desc", "limit": str(limit)},
         )
-        if not rows:
-            return None
-        return Comment.from_dict(rows[0]).id or None
+        comments = [Comment.from_dict(row) for row in reversed(rows)]
+        return [comment for comment in comments if comment.id]
+
+    async def newest_comment(self, issue_id: str) -> Comment | None:
+        """Return an issue's newest comment, or None if it has none."""
+        comments = await self.list_recent_comments(issue_id, limit=1)
+        return comments[-1] if comments else None
 
     async def list_projects(self, company_id: str) -> list[Project]:
         """List non-archived projects."""
-        rows = await self._get_list(f"/companies/{company_id}/projects")
+        rows = await self._get_list(f"/companies/{_seg(company_id)}/projects")
         return [Project.from_dict(row) for row in rows]
 
     # Write endpoints ------------------------------------------------------
@@ -647,38 +658,48 @@ class PaperclipClient:
         if allow_duplicate:
             body["allowDuplicate"] = True
         return Issue.from_dict(
-            await self._post_object(f"/companies/{company_id}/issues", body)
+            await self._post_object(f"/companies/{_seg(company_id)}/issues", body)
         )
 
     async def add_comment(self, issue_id: str, body: str) -> Comment:
         """Add a comment; this wakes the assignee (and reopens closed issues)."""
         return Comment.from_dict(
             await self._post_object(
-                f"/issues/{quote(issue_id, safe='')}/comments", {"body": body}
+                f"/issues/{_seg(issue_id)}/comments", {"body": body}
             )
         )
 
     async def pause_agent(self, agent_id: str) -> Agent:
         """Pause an agent (cancels its active runs)."""
-        return Agent.from_dict(await self._post_object(f"/agents/{agent_id}/pause"))
+        return Agent.from_dict(
+            await self._post_object(f"/agents/{_seg(agent_id)}/pause")
+        )
 
     async def resume_agent(self, agent_id: str) -> Agent:
         """Resume a paused agent (it becomes idle)."""
-        return Agent.from_dict(await self._post_object(f"/agents/{agent_id}/resume"))
+        return Agent.from_dict(
+            await self._post_object(f"/agents/{_seg(agent_id)}/resume")
+        )
 
     async def wake_agent(self, agent_id: str, *, reason: str | None = None) -> str:
         """Ask for an on-demand heartbeat; return the run or skip status."""
         body: JsonObject = {"source": "on_demand", "triggerDetail": "manual"}
         if reason:
             body["reason"] = reason
-        result = await self._post_object(f"/agents/{agent_id}/wakeup", body)
+        result = await self._post_object(f"/agents/{_seg(agent_id)}/wakeup", body)
         return _str(result, "status", "queued")
+
+    async def get_approval(self, approval_id: str) -> Approval:
+        """Get one approval (any status)."""
+        return Approval.from_dict(
+            await self._get_object(f"/approvals/{_seg(approval_id)}")
+        )
 
     async def approve(self, approval_id: str, note: str | None = None) -> Approval:
         """Approve a pending approval."""
         return Approval.from_dict(
             await self._post_object(
-                f"/approvals/{approval_id}/approve", {"decisionNote": note}
+                f"/approvals/{_seg(approval_id)}/approve", {"decisionNote": note}
             )
         )
 
@@ -686,7 +707,7 @@ class PaperclipClient:
         """Reject a pending approval."""
         return Approval.from_dict(
             await self._post_object(
-                f"/approvals/{approval_id}/reject", {"decisionNote": note}
+                f"/approvals/{_seg(approval_id)}/reject", {"decisionNote": note}
             )
         )
 
@@ -703,20 +724,25 @@ class PaperclipClient:
         POST a routine webhook trigger, HMAC-signed when a secret is given.
 
         This route ignores board and agent credentials, so no Authorization
-        header is sent; only the trigger's own secret counts.
+        header is sent; only the trigger's own secret counts. ``timestamp``
+        (Unix time in milliseconds) defaults to now. Paperclip only honours
+        ``idempotency_key`` for unsigned triggers: a signed delivery is
+        de-duplicated by its own timestamp and signature instead.
         """
         body = json.dumps(payload, separators=(",", ":")).encode()
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if secret:
-            ts = str(timestamp if timestamp is not None else int(time.time()))
+            # Milliseconds: Paperclip rejects a second delivery with the same
+            # timestamp and signature as a replay, so second resolution would
+            # refuse two identical fires within one second.
+            ts = str(
+                timestamp if timestamp is not None else time.time_ns() // 1_000_000
+            )
             headers["X-Paperclip-Timestamp"] = ts
             headers["X-Paperclip-Signature"] = sign_webhook(secret, ts, body)
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
-        url = (
-            f"{self.base_url}/api/routine-triggers/public/"
-            f"{quote(public_id, safe='')}/fire"
-        )
+        url = f"{self.base_url}/api/routine-triggers/public/{_seg(public_id)}/fire"
         try:
             async with self._session.post(
                 url, data=body, headers=headers, timeout=self._timeout

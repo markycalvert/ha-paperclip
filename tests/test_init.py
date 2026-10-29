@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 import pytest
@@ -13,11 +14,16 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
+    async_capture_events,
     async_fire_time_changed,
 )
 
 from custom_components.paperclip import async_remove_config_entry_device
-from custom_components.paperclip.const import CONF_DEFAULT_PROJECT, DOMAIN
+from custom_components.paperclip.const import (
+    CONF_DEFAULT_PROJECT,
+    DOMAIN,
+    EVENT_AGENT_REPLIED,
+)
 
 from .conftest import COMPANY_ID, ENGINEER_ID, HOME_OPS_ID, PROJECT_ID, FakePaperclip
 
@@ -240,3 +246,55 @@ async def test_options_flow_lists_projects(
     )
     values = [option["value"] for option in selector.config["options"]]
     assert PROJECT_ID in values
+
+
+async def test_agent_devices_are_services(
+    hass: HomeAssistant, init_integration: MockConfigEntry
+) -> None:
+    """Agents are software, so their devices are service devices."""
+    for key in (COMPANY_ID, ENGINEER_ID, HOME_OPS_ID):
+        device = _device(hass, key)
+        assert device is not None
+        assert device.entry_type is dr.DeviceEntryType.SERVICE
+
+
+async def test_reload_ends_reply_waits(
+    hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
+) -> None:
+    """A wait running during a reload ends; the reply then fires only once."""
+    events = async_capture_events(hass, EVENT_AGENT_REPLIED)
+    old = init_integration.runtime_data.coordinator
+    task = hass.async_create_task(
+        hass.services.async_call(
+            DOMAIN,
+            "ask_agent",
+            {"agent": "Engineer", "message": "Check the backups", "wait_for_reply": 60},
+            blocking=True,
+            return_response=True,
+        )
+    )
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if old._waiting:
+            break
+    assert old._waiting
+
+    assert await hass.config_entries.async_reload(init_integration.entry_id)
+    await hass.async_block_till_done()
+    response = await asyncio.wait_for(task, 5)
+    assert response is not None
+    assert response["replied"] is False
+    assert not old._waiting
+    # The old coordinator keeps its hands off the tracking data now.
+    assert old.tracker._closed
+
+    issue_id = response["issue_id"]
+    fake.agent_comment(issue_id, ENGINEER_ID, "Backups are fine.")
+    await old.async_wait_for_reply(old.tracker.issues[issue_id], 1)
+    new = init_integration.runtime_data.coordinator
+    assert new is not old
+    await new.async_refresh()
+    await new.async_refresh()
+    assert [(e.data["body"], e.data["delivered"]) for e in events] == [
+        ("Backups are fine.", False)
+    ]

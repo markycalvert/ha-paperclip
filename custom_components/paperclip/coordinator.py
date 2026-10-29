@@ -10,11 +10,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from functools import partial
 from typing import TYPE_CHECKING, Any, override
+from urllib.parse import quote
 
 from awesomeversion import AwesomeVersion, AwesomeVersionException
-from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -48,6 +48,7 @@ from .const import (
     EVENT_TITLE_MAX_LENGTH,
     ISSUE_CACHE_SIZE,
     ISSUE_PAGE_SIZE,
+    ISSUE_UPDATE_OVERLAP,
     LOGGER,
     MAX_ISSUE_PAGES,
     MIN_PAPERCLIP_VERSION,
@@ -86,6 +87,55 @@ def truncate(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _reached(cursor_id: str | None, cursor_at: datetime | None, ours: Comment) -> bool:
+    """Return True if a comment cursor is at or past our own comment."""
+    if cursor_id is None:
+        return False
+    if cursor_id == ours.id:
+        return True
+    return (
+        cursor_at is not None
+        and ours.created_at is not None
+        and cursor_at >= ours.created_at
+    )
+
+
+def _posted_after(comment: Comment, ours: Comment) -> bool:
+    """Return True if a comment was posted after our own comment."""
+    return (
+        comment.created_at is not None
+        and ours.created_at is not None
+        and comment.created_at > ours.created_at
+    )
+
+
+def _split_at_ours(
+    batch: CommentBatch, ours: Comment | None, *, seen_ours: bool
+) -> tuple[list[Comment], list[Comment], bool]:
+    """
+    Split new comments into those before our own comment and those after it.
+
+    Return both lists and whether our comment has now been passed.
+    """
+    if ours is None:
+        return [], list(batch.comments), True
+    if _reached(batch.cursor_id, batch.cursor_at, ours):
+        seen_ours = True
+    earlier: list[Comment] = []
+    later: list[Comment] = []
+    for comment in batch.comments:
+        if not seen_ours:
+            if comment.id == ours.id:
+                seen_ours = True
+                continue
+            if not _posted_after(comment, ours):
+                earlier.append(comment)
+                continue
+            seen_ours = True
+        later.append(comment)
+    return earlier, later, seen_ours
+
+
 def comparable_version(version: str | None) -> AwesomeVersion | None:
     """
     Return a server version that can be compared, or None if it is unknown.
@@ -111,6 +161,15 @@ class CurrentTask:
     issue_id: str | None
     identifier: str | None
     title: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CommentBatch:
+    """New comments on one issue, and the cursor they were read after."""
+
+    cursor_id: str | None
+    cursor_at: datetime | None
+    comments: list[Comment]
 
 
 @dataclass(slots=True)
@@ -144,9 +203,7 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
             LOGGER,
             config_entry=entry,
             name=f"{DOMAIN} {entry.title}",
-            update_interval=timedelta(
-                seconds=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
-            ),
+            update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
         )
         self.client = client
         self.tracker = tracker
@@ -159,6 +216,9 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
         self._known_approvals: set[str] | None = None
         self._checked_version: str | None = None
         self._projects: dict[str, str] | None = None
+        # Set when the entry unloads: reply waits still running in an action
+        # or Assist turn stop, and stop touching this entry's tracker.
+        self._stopping = asyncio.Event()
 
     # URLs ------------------------------------------------------------------
 
@@ -172,11 +232,11 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
 
     def approval_url(self, approval_id: str) -> str:
         """Return the Paperclip UI URL of an approval."""
-        return self._ui_url(f"/approvals/{approval_id}")
+        return self._ui_url(f"/approvals/{quote(approval_id, safe='')}")
 
     def agent_url(self, agent: Agent) -> str:
         """Return the Paperclip UI URL of an agent."""
-        return self._ui_url(f"/agents/{agent.url_key or agent.id}")
+        return self._ui_url(f"/agents/{quote(agent.url_key or agent.id, safe='')}")
 
     def dashboard_url(self) -> str:
         """Return the Paperclip UI URL of the company dashboard."""
@@ -187,6 +247,16 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
     @override
     async def _async_setup(self) -> None:
         await self.tracker.async_load()
+
+    @callback
+    def async_stop_waits(self) -> None:
+        """End every reply wait of this coordinator (the entry is unloading)."""
+        self._stopping.set()
+
+    @override
+    async def async_shutdown(self) -> None:
+        self.async_stop_waits()
+        await super().async_shutdown()
 
     @override
     async def _async_update_data(self) -> PaperclipState:
@@ -369,7 +439,9 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
 
     async def _async_follow_issue_statuses(self, since: datetime) -> None:
         """Fire status events for tracked issues and advance the cursor."""
-        listed = await self._async_list_updated_issues(since)
+        # Read from a little before the cursor: an update stamped earlier than
+        # the newest one listed can still commit after that list was read.
+        listed = await self._async_list_updated_issues(since - ISSUE_UPDATE_OVERLAP)
         if listed is None:
             return
         rows, complete = listed
@@ -451,7 +523,7 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
         async def poll(tracked: TrackedIssue) -> PaperclipError | None:
             async with semaphore:
                 try:
-                    comments = await self._async_fetch_new_comments(tracked)
+                    batch = await self._async_fetch_new_comments(tracked)
                 except PaperclipNotFoundError:
                     self._forget_issue(tracked.id)
                     return None
@@ -462,7 +534,7 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
                         err,
                     )
                     return err
-            for comment in comments:
+            for comment in batch.comments:
                 if comment.is_agent:
                     self._fire_reply(tracked, comment, agents, delivered=False)
             return None
@@ -481,19 +553,51 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
         ):
             raise failures[0]
 
-    async def _async_fetch_new_comments(self, tracked: TrackedIssue) -> list[Comment]:
+    async def _async_fetch_new_comments(self, tracked: TrackedIssue) -> CommentBatch:
         """Return comments newer than the last one seen and advance the cursor."""
         lock = self._locks.setdefault(tracked.id, asyncio.Lock())
         async with lock:
             # Read the cursor from the tracker: the caller may hold a copy that
             # an earlier poll has already advanced.
             current = self.tracker.issues.get(tracked.id, tracked)
-            comments = await self.client.list_comments(
-                tracked.id, after=current.last_comment_id
+            cursor_id, cursor_at = current.last_comment_id, current.last_comment_at
+            comments, newest = await self._async_list_after_cursor(
+                tracked.id, cursor_id, cursor_at
             )
-            if comments:
-                self.tracker.set_last_comment(tracked.id, comments[-1].id)
-            return comments
+            if self._stopping.is_set():
+                return CommentBatch(cursor_id, cursor_at, [])
+            if last := (comments[-1] if comments else newest):
+                self.tracker.set_last_comment(tracked.id, last.id, last.created_at)
+            return CommentBatch(cursor_id, cursor_at, comments)
+
+    async def _async_list_after_cursor(
+        self, issue_id: str, cursor_id: str | None, cursor_at: datetime | None
+    ) -> tuple[list[Comment], Comment | None]:
+        """
+        Return the comments after the cursor, and where to move a dead cursor.
+
+        A quiet issue costs one request: its newest comment is the cursor.
+        """
+        client = self.client
+        if cursor_id is None:
+            return await client.list_comments(issue_id), None
+        newest = await client.newest_comment(issue_id)
+        if newest is None or newest.id == cursor_id:
+            return [], None
+        if comments := await client.list_comments(issue_id, after=cursor_id):
+            return comments, None
+        # Paperclip answers an empty list when the "after" comment no longer
+        # exists (a discarded queued comment, a deleted agent's comments).
+        # Find the newer comments by time instead, then move the cursor on.
+        LOGGER.debug("Comment cursor of issue %s is gone; reading by time", issue_id)
+        if cursor_at is None:
+            return [], newest
+        recent = await client.list_recent_comments(issue_id)
+        return [
+            comment
+            for comment in recent
+            if comment.created_at is not None and comment.created_at > cursor_at
+        ], newest
 
     # Events ------------------------------------------------------------------
 
@@ -618,8 +722,13 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
         project_id: str | None,
         priority: str | None,
         allow_duplicate: bool,
-    ) -> TrackedIssue:
-        """Create an issue in Paperclip and start following it."""
+    ) -> tuple[TrackedIssue, bool]:
+        """
+        Create an issue in Paperclip and start following it.
+
+        Return the tracked issue and whether Paperclip handed back an existing
+        open issue with the same title instead of creating one.
+        """
         issue = await self.client.create_issue(
             self.company_id,
             title=title,
@@ -629,14 +738,31 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
             priority=priority,
             allow_duplicate=allow_duplicate,
         )
-        last_comment_id: str | None = None
-        if issue.deduplicated and issue.id not in self.tracker.issues:
-            # Paperclip handed back an existing open issue. Its earlier comments
-            # are not replies to this request, so follow it from its newest one.
-            last_comment_id = await self.client.newest_comment_id(issue.id)
-        return self.tracker.track(
-            issue, agent_id=agent_id, last_comment_id=last_comment_id
+        if not issue.deduplicated:
+            return self.tracker.track(issue, agent_id=agent_id), False
+        # Paperclip's title de-duplication ignores the assignee, so the open
+        # issue it returned may belong to another agent, or to none.
+        if agent_id and issue.assignee_agent_id != agent_id:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="duplicate_issue_other_assignee",
+                translation_placeholders={
+                    "identifier": issue.identifier or issue.id,
+                    "agent": self.agent_name(agent_id),
+                },
+            )
+        newest: Comment | None = None
+        if issue.id not in self.tracker.issues:
+            # Its earlier comments are not replies to this request, so follow
+            # it from its newest one.
+            newest = await self.client.newest_comment(issue.id)
+        tracked = self.tracker.track(
+            issue,
+            agent_id=issue.assignee_agent_id,
+            last_comment_id=newest.id if newest else None,
+            last_comment_at=newest.created_at if newest else None,
         )
+        return tracked, True
 
     async def async_comment(
         self, issue_ref: str, body: str
@@ -649,7 +775,10 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
         if tracked is None:
             issue = await self.client.get_issue(issue_ref)
             tracked = self.tracker.track(
-                issue, agent_id=issue.assignee_agent_id, last_comment_id=comment.id
+                issue,
+                agent_id=issue.assignee_agent_id,
+                last_comment_id=comment.id,
+                last_comment_at=comment.created_at,
             )
         return tracked, comment
 
@@ -658,53 +787,56 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
         tracked: TrackedIssue,
         wait_seconds: float,
         *,
-        after_comment_id: str | None = None,
+        after: Comment | None = None,
     ) -> Comment | None:
         """
         Wait up to ``wait_seconds`` seconds for an agent comment on an issue.
 
-        Only agent comments posted after ``after_comment_id`` (or any agent
-        comment when it is None) count as the reply. Every agent comment seen
-        here still fires ``paperclip_agent_replied`` exactly once, with
-        ``delivered`` true for the one returned to the caller.
+        Only agent comments posted after our own comment ``after`` (or any
+        agent comment when it is None) count as the reply. Every agent comment
+        seen here still fires ``paperclip_agent_replied`` exactly once, with
+        ``delivered`` true for the one returned to the caller. The wait ends
+        early, without a reply, when the entry unloads.
         """
-        if wait_seconds <= 0:
+        if wait_seconds <= 0 or self._stopping.is_set():
             return None
         agents = self.data.agents if self.data else {}
-        current = self.tracker.issues.get(tracked.id, tracked)
-        seen_ours = (
-            after_comment_id is None or current.last_comment_id == after_comment_id
-        )
+        # Whether our comment was already passed is decided from the cursor
+        # read under the issue's lock: a poll that was already reading the
+        # issue may move the cursor to (or past) our comment at any moment.
+        seen_ours = after is None
         self._waiting[tracked.id] += 1
         try:
             async with asyncio.timeout(wait_seconds):
-                while True:
+                while not self._stopping.is_set():
                     try:
-                        comments = await self._async_fetch_new_comments(tracked)
+                        batch = await self._async_fetch_new_comments(tracked)
                     except PaperclipError as err:
                         LOGGER.debug(
                             "Polling %s for a reply failed: %s", tracked.id, err
                         )
-                        comments = []
+                        batch = CommentBatch(None, None, [])
+                    earlier, later, seen_ours = _split_at_ours(
+                        batch, after, seen_ours=seen_ours
+                    )
+                    for comment in earlier:
+                        if comment.is_agent:
+                            self._fire_reply(tracked, comment, agents, delivered=False)
                     reply: Comment | None = None
-                    for comment in comments:
-                        if not seen_ours:
-                            seen_ours = comment.id == after_comment_id
-                            if comment.is_agent:
-                                self._fire_reply(
-                                    tracked, comment, agents, delivered=False
-                                )
-                            continue
+                    for comment in later:
                         if comment.is_agent:
                             first = reply is None
                             reply = reply or comment
                             self._fire_reply(tracked, comment, agents, delivered=first)
                     if reply is not None:
                         return reply
-                    await asyncio.sleep(REPLY_POLL_INTERVAL)
+                    with suppress(TimeoutError):
+                        async with asyncio.timeout(REPLY_POLL_INTERVAL):
+                            await self._stopping.wait()
         except TimeoutError:
             return None
         finally:
             self._waiting[tracked.id] -= 1
             if not self._waiting[tracked.id]:
                 del self._waiting[tracked.id]
+        return None

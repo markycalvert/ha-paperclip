@@ -48,6 +48,7 @@ class TrackedIssue:
     tracked_at: datetime
     last_comment_id: str | None = None
     closed_at: datetime | None = None
+    last_comment_at: datetime | None = None
 
     @property
     def is_closed(self) -> bool:
@@ -65,6 +66,7 @@ class TrackedIssue:
             "tracked_at": _iso(self.tracked_at),
             "last_comment_id": self.last_comment_id,
             "closed_at": _iso(self.closed_at),
+            "last_comment_at": _iso(self.last_comment_at),
         }
 
     @classmethod
@@ -83,6 +85,7 @@ class TrackedIssue:
             tracked_at=tracked_at,
             last_comment_id=data.get("last_comment_id"),
             closed_at=parse_datetime(data.get("closed_at")),
+            last_comment_at=parse_datetime(data.get("last_comment_at")),
         )
 
 
@@ -106,6 +109,7 @@ class IssueTracker:
         self.issues: dict[str, TrackedIssue] = {}
         self.conversations: dict[str, ConversationLink] = {}
         self.cursor: datetime | None = None
+        self._closed = False
 
     async def async_load(self) -> None:
         """Load the persisted state."""
@@ -124,8 +128,19 @@ class IssueTracker:
         self.cursor = parse_datetime(data.get("cursor"))
 
     async def async_flush(self) -> None:
-        """Write pending changes now (before an unload or reload)."""
+        """Write pending changes now."""
         await self._store.async_save(self._data_to_save())
+
+    async def async_close(self) -> None:
+        """
+        Write pending changes and stop saving (the entry is unloading).
+
+        A reply wait or poll still running on the old coordinator must not
+        overwrite what the reloaded entry saves, or recreate the file of a
+        removed entry.
+        """
+        await self.async_flush()
+        self._closed = True
 
     async def async_remove(self) -> None:
         """Delete the persisted state (config entry removed)."""
@@ -148,7 +163,8 @@ class IssueTracker:
     @callback
     def async_schedule_save(self) -> None:
         """Save soon, coalescing bursts of changes."""
-        self._store.async_delay_save(self._data_to_save, STORAGE_SAVE_DELAY)
+        if not self._closed:
+            self._store.async_delay_save(self._data_to_save, STORAGE_SAVE_DELAY)
 
     @callback
     def track(
@@ -157,6 +173,7 @@ class IssueTracker:
         *,
         agent_id: str | None,
         last_comment_id: str | None = None,
+        last_comment_at: datetime | None = None,
     ) -> TrackedIssue:
         """Start (or refresh) tracking an issue."""
         now = dt_util.utcnow()
@@ -168,7 +185,9 @@ class IssueTracker:
             tracked.agent_id = agent_id or issue.assignee_agent_id or tracked.agent_id
             tracked.status = issue.status
             tracked.closed_at = closed_at
-            tracked.last_comment_id = last_comment_id or tracked.last_comment_id
+            if last_comment_id:
+                tracked.last_comment_id = last_comment_id
+                tracked.last_comment_at = last_comment_at
         else:
             tracked = TrackedIssue(
                 id=issue.id,
@@ -179,6 +198,7 @@ class IssueTracker:
                 tracked_at=now,
                 last_comment_id=last_comment_id,
                 closed_at=closed_at,
+                last_comment_at=last_comment_at,
             )
             self.issues[issue.id] = tracked
         # Issue updates are read with a server-side updatedSince cursor. Start
@@ -216,10 +236,13 @@ class IssueTracker:
         self.async_schedule_save()
 
     @callback
-    def set_last_comment(self, issue_id: str, comment_id: str) -> None:
-        """Record the newest comment seen on an issue."""
+    def set_last_comment(
+        self, issue_id: str, comment_id: str, created_at: datetime | None
+    ) -> None:
+        """Record the newest comment seen on an issue, and when it was posted."""
         if tracked := self.issues.get(issue_id):
             tracked.last_comment_id = comment_id
+            tracked.last_comment_at = created_at
             self.async_schedule_save()
 
     @callback

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+from unittest.mock import patch
 
 import aiohttp
 import pytest
@@ -149,3 +151,47 @@ async def test_non_json_and_no_key(
     assert await client.list_companies() == []
     headers = aioclient_mock.mock_calls[0][3]
     assert "Authorization" not in headers
+
+
+async def test_ids_are_escaped_in_paths(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """An id can never step out of its path segment into another route."""
+    aioclient_mock.post(re.compile(r"^http://paperclip\.local:3100/"), json={})
+    aioclient_mock.get(re.compile(r"^http://paperclip\.local:3100/"), json={})
+    client = PaperclipClient(async_get_clientsession(hass), BASE_URL, "pcp_board_x")
+    crafted = "../agents/a/pause?x="
+    await client.approve(crafted)
+    await client.reject(crafted)
+    await client.get_approval(crafted)
+    await client.wake_agent(crafted)
+    await client.get_company(crafted)
+    paths = [call[1].raw_path for call in aioclient_mock.mock_calls]
+    escaped = "..%2Fagents%2Fa%2Fpause%3Fx="
+    assert paths == [
+        f"/api/approvals/{escaped}/approve",
+        f"/api/approvals/{escaped}/reject",
+        f"/api/approvals/{escaped}",
+        f"/api/agents/{escaped}/wakeup",
+        f"/api/companies/{escaped}",
+    ]
+    assert all(not call[1].query for call in aioclient_mock.mock_calls)
+
+
+async def test_webhook_timestamp_is_in_milliseconds(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """Two fires in the same second must not share a timestamp (a replay)."""
+    url = f"{BASE_URL}/api/routine-triggers/public/{PUBLIC_ID}/fire"
+    aioclient_mock.post(url, status=202, json={"status": "issue_created"})
+    client = PaperclipClient(async_get_clientsession(hass), BASE_URL, None)
+    with patch(
+        "custom_components.paperclip.api.time.time_ns",
+        return_value=1_767_603_600_123_456_789,
+    ):
+        await client.fire_routine_webhook(PUBLIC_ID, {}, secret="test-secret")
+    headers = aioclient_mock.mock_calls[-1][3]
+    assert headers["X-Paperclip-Timestamp"] == "1767603600123"
+    assert headers["X-Paperclip-Signature"] == sign_webhook(
+        "test-secret", "1767603600123", b"{}"
+    )

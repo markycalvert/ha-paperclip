@@ -14,7 +14,7 @@ from pytest_homeassistant_custom_component.common import (
     async_capture_events,
 )
 
-from custom_components.paperclip.api import Issue
+from custom_components.paperclip.api import Comment, Issue
 from custom_components.paperclip.const import (
     DOMAIN,
     EVENT_AGENT_REPLIED,
@@ -89,7 +89,7 @@ async def test_tracker_prunes(hass: HomeAssistant) -> None:
     tracker.track(_issue("closed", "done"), agent_id=None)
     tracker.track(_issue("open"), agent_id=None)
     tracker.link_conversation("conv", "closed", "agent")
-    tracker.set_last_comment("unknown", "c1")
+    tracker.set_last_comment("unknown", "c1", None)
     later = dt_util.utcnow() + timedelta(days=2)
     tracker.prune(later)
     assert set(tracker.issues) == {"open"}
@@ -156,7 +156,7 @@ async def test_comment_poll_error_skips_one_issue(
     coordinator = init_integration.runtime_data.coordinator
     events = async_capture_events(hass, EVENT_AGENT_REPLIED)
     tracked, _ = await coordinator.async_comment("ACME-7", "Hi")
-    other = await coordinator.async_create_tracked_issue(
+    other, _ = await coordinator.async_create_tracked_issue(
         title="Water the plants",
         description=None,
         agent_id=ENGINEER_ID,
@@ -222,7 +222,7 @@ async def test_wait_skips_older_agent_comments_and_survives_errors(
 
     fake._route = route  # type: ignore[method-assign]
     reply = await coordinator.async_wait_for_reply(
-        tracked, 5, after_comment_id=ours["id"]
+        tracked, 5, after=Comment.from_dict(ours)
     )
     assert reply is not None
     assert reply.body == "Answer to the second."
@@ -238,7 +238,7 @@ async def _track_three(hass: HomeAssistant, entry: MockConfigEntry) -> list[str]
     coordinator = entry.runtime_data.coordinator
     ids = []
     for title in ("Water the plants", "Feed the cat", "Check the mail"):
-        tracked = await coordinator.async_create_tracked_issue(
+        tracked, _ = await coordinator.async_create_tracked_issue(
             title=title,
             description=None,
             agent_id=ENGINEER_ID,
@@ -340,10 +340,119 @@ async def test_reply_under_sentinel_user_is_an_agent_reply(
             fake.sentinel_agent_comment(RUNNING_ISSUE_ID, ENGINEER_ID, "On it.")
 
     fake.on_get_comments = reply
-    answer = await coordinator.async_wait_for_reply(
-        tracked, 5, after_comment_id=comment.id
-    )
+    answer = await coordinator.async_wait_for_reply(tracked, 5, after=comment)
     assert answer is not None
     assert answer.body == "On it."
     assert answer.author_agent_id == ENGINEER_ID
     assert events[0].data["agent_name"] == "Engineer"
+
+
+async def test_wait_finds_reply_after_a_poll_passed_our_comment(
+    hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
+) -> None:
+    """A poll that read past our comment before the wait began does not hide it."""
+    coordinator = init_integration.runtime_data.coordinator
+    events = async_capture_events(hass, EVENT_AGENT_REPLIED)
+    tracked, _ = await coordinator.async_comment("ACME-7", "First")
+    ours = Comment.from_dict(fake._add_comment(RUNNING_ISSUE_ID, "Second"))
+    quick = fake.agent_comment(RUNNING_ISSUE_ID, ENGINEER_ID, "Quick answer.")
+    # A scheduled poll was already reading the issue when our comment landed.
+    await coordinator.async_refresh()
+    assert coordinator.tracker.issues[tracked.id].last_comment_id == quick["id"]
+
+    def reply(_: str) -> None:
+        if len(fake.comments[RUNNING_ISSUE_ID]) == 3:
+            fake.agent_comment(RUNNING_ISSUE_ID, ENGINEER_ID, "Full answer.")
+
+    fake.on_get_comments = reply
+    answer = await coordinator.async_wait_for_reply(tracked, 5, after=ours)
+    assert answer is not None
+    assert answer.body == "Full answer."
+    assert [(e.data["body"], e.data["delivered"]) for e in events] == [
+        ("Quick answer.", False),
+        ("Full answer.", True),
+    ]
+
+
+async def test_deleted_cursor_comment_does_not_stop_replies(
+    hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
+) -> None:
+    """Paperclip lists nothing after a deleted comment; replies still arrive."""
+    coordinator = init_integration.runtime_data.coordinator
+    events = async_capture_events(hass, EVENT_AGENT_REPLIED)
+    earlier = fake.agent_comment(RUNNING_ISSUE_ID, ENGINEER_ID, "Earlier note.")
+    tracked, comment = await coordinator.async_comment("ACME-7", "Status?")
+    # Our comment was queued and then discarded: Paperclip hard-deletes it.
+    fake.comments[RUNNING_ISSUE_ID] = [
+        item for item in fake.comments[RUNNING_ISSUE_ID] if item["id"] != comment.id
+    ]
+    await coordinator.async_refresh()
+    assert events == []
+    # The cursor moved to the newest comment that still exists.
+    assert coordinator.tracker.issues[tracked.id].last_comment_id == earlier["id"]
+
+    path = f"/api/issues/{RUNNING_ISSUE_ID}/comments"
+    reads = len(fake.calls_to("GET", path))
+    await coordinator.async_refresh()
+    # A quiet issue costs one request.
+    assert len(fake.calls_to("GET", path)) == reads + 1
+
+    fake.agent_comment(RUNNING_ISSUE_ID, ENGINEER_ID, "Here is the status.")
+    await coordinator.async_refresh()
+    assert [event.data["body"] for event in events] == ["Here is the status."]
+
+    # The anchor disappears again, with a new reply behind it.
+    fake.comments[RUNNING_ISSUE_ID].pop()
+    fake.agent_comment(RUNNING_ISSUE_ID, ENGINEER_ID, "One more thing.")
+    await coordinator.async_refresh()
+    await coordinator.async_refresh()
+    assert [event.data["body"] for event in events] == [
+        "Here is the status.",
+        "One more thing.",
+    ]
+
+
+async def test_late_committed_status_change_is_seen(
+    hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
+) -> None:
+    """An update stamped before the cursor but committed later is still read."""
+    coordinator = init_integration.runtime_data.coordinator
+    statuses = async_capture_events(hass, EVENT_ISSUE_STATUS_CHANGED)
+    first, second, _ = await _track_three(hass, init_integration)
+    fake.set_issue_status(second, "in_review")
+    await coordinator.async_refresh()
+    cursor = coordinator.tracker.cursor
+    assert cursor is not None
+    fake.issues[first]["status"] = "done"
+    fake.issues[first]["updatedAt"] = (cursor - timedelta(seconds=5)).isoformat()
+    await coordinator.async_refresh()
+    assert [(e.data["issue_id"], e.data["new_status"]) for e in statuses] == [
+        (second, "in_review"),
+        (first, "done"),
+    ]
+    assert coordinator.tracker.cursor == cursor
+    since = fake.calls_to("GET", f"/api/companies/{COMPANY_ID}/issues")[-1][2]
+    assert datetime.fromisoformat(since["updatedSince"]) == cursor - timedelta(
+        seconds=60
+    )
+
+
+async def test_tracker_stores_comment_time_and_stops_after_close(
+    hass: HomeAssistant,
+) -> None:
+    """The comment cursor's time is stored; a closed tracker saves nothing more."""
+    stamp = datetime(2026, 1, 5, 9, 30, tzinfo=UTC)
+    tracker = IssueTracker(hass, "entry")
+    tracker.track(
+        _issue("a"), agent_id=None, last_comment_id="c1", last_comment_at=stamp
+    )
+    await tracker.async_close()
+    loaded = IssueTracker(hass, "entry")
+    await loaded.async_load()
+    assert loaded.issues["a"].last_comment_id == "c1"
+    assert loaded.issues["a"].last_comment_at == stamp
+
+    with patch.object(tracker._store, "async_delay_save") as delay_save:
+        tracker.set_last_comment("a", "c2", stamp)
+    delay_save.assert_not_called()
+    await loaded.async_remove()

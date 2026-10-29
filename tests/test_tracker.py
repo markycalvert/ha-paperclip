@@ -480,13 +480,34 @@ async def test_tracker_stores_comment_time_and_stops_after_close(
     tracker.track(
         _issue("a"), agent_id=None, last_comment_id="c1", last_comment_at=stamp
     )
+    tracker.set_notify_late_reply("a", notify=True)
+    tracker.set_notify_late_reply("missing", notify=True)
     await tracker.async_close()
     loaded = IssueTracker(hass, "entry")
     await loaded.async_load()
     assert loaded.issues["a"].last_comment_id == "c1"
     assert loaded.issues["a"].last_comment_at == stamp
+    assert loaded.issues["a"].notify_late_reply is True
 
     with patch.object(tracker._store, "async_delay_save") as delay_save:
         tracker.set_last_comment("a", "c2", stamp)
     delay_save.assert_not_called()
     await loaded.async_remove()
+
+
+async def test_change_during_close_schedules_no_write(hass: HomeAssistant) -> None:
+    """A change made while the final flush awaits must not write later."""
+    tracker = IssueTracker(hass, "entry")
+    tracker.track(_issue("a"), agent_id=None)
+    real_save = tracker._store.async_save
+
+    async def save_while_changing(data: Any) -> None:
+        tracker.set_notify_late_reply("a", notify=True)
+        await real_save(data)
+
+    with (
+        patch.object(tracker._store, "async_save", side_effect=save_while_changing),
+        patch.object(tracker._store, "async_delay_save") as delay_save,
+    ):
+        await tracker.async_close()
+    delay_save.assert_not_called()

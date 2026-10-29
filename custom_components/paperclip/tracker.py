@@ -49,6 +49,9 @@ class TrackedIssue:
     last_comment_id: str | None = None
     closed_at: datetime | None = None
     last_comment_at: datetime | None = None
+    # Assist stopped waiting and promised to send the next reply as a
+    # notification.
+    notify_late_reply: bool = False
 
     @property
     def is_closed(self) -> bool:
@@ -67,6 +70,7 @@ class TrackedIssue:
             "last_comment_id": self.last_comment_id,
             "closed_at": _iso(self.closed_at),
             "last_comment_at": _iso(self.last_comment_at),
+            "notify_late_reply": self.notify_late_reply,
         }
 
     @classmethod
@@ -86,6 +90,7 @@ class TrackedIssue:
             last_comment_id=data.get("last_comment_id"),
             closed_at=parse_datetime(data.get("closed_at")),
             last_comment_at=parse_datetime(data.get("last_comment_at")),
+            notify_late_reply=data.get("notify_late_reply") is True,
         )
 
 
@@ -139,8 +144,10 @@ class IssueTracker:
         overwrite what the reloaded entry saves, or recreate the file of a
         removed entry.
         """
-        await self.async_flush()
+        # Close first: a change made while the flush awaits must not schedule a
+        # delayed write that lands after the reloaded entry has saved.
         self._closed = True
+        await self.async_flush()
 
     async def async_remove(self) -> None:
         """Delete the persisted state (config entry removed)."""
@@ -262,6 +269,15 @@ class IssueTracker:
             if not item.is_closed
             or (item.closed_at and now - item.closed_at < POLL_COMMENTS_AFTER_CLOSE)
         ]
+
+    @callback
+    def set_notify_late_reply(self, issue_id: str, *, notify: bool) -> None:
+        """Set whether the next agent reply on this issue becomes a notification."""
+        item = self.issues.get(issue_id)
+        if item is None or item.notify_late_reply == notify:
+            return
+        item.notify_late_reply = notify
+        self.async_schedule_save()
 
     @callback
     def link_conversation(

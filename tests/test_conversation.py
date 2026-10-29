@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
@@ -11,10 +15,24 @@ from pytest_homeassistant_custom_component.common import (
     async_capture_events,
 )
 
-from custom_components.paperclip.const import CONF_DEFAULT_PROJECT, EVENT_AGENT_REPLIED
+from custom_components.paperclip.const import (
+    CONF_DEFAULT_PROJECT,
+    CONF_NOTIFY_LATE_REPLIES,
+    CONF_REPLY_WAIT,
+    EVENT_AGENT_REPLIED,
+    MAX_ASSIST_REPLY_WAIT,
+)
 from custom_components.paperclip.conversation import plain_speech
 
 from .conftest import COMPANY_ID, HOME_OPS_ID, PROJECT_ID, FakePaperclip
+
+STILL_WORKING_NOTIFY = (
+    "Home Ops is still working on it (ACME-43). I'll send the answer as a notification."
+)
+STILL_WORKING_PAPERCLIP = (
+    "Home Ops is still working on it (ACME-43). The answer will be in Paperclip."
+)
+NOTIFY = "custom_components.paperclip.coordinator.persistent_notification.async_create"
 
 
 @pytest.mark.parametrize(
@@ -125,28 +143,44 @@ async def test_first_message_creates_issue_and_reply_is_spoken(
     comment_calls = fake.calls_to("POST", f"/api/issues/{issue_id}/comments")
     assert comment_calls[0][3] == {"body": "Turn on the porch light too."}
     assert len(fake.calls_to("POST", f"/api/companies/{COMPANY_ID}/issues")) == 1
-    assert follow_up.response.speech["plain"]["speech"] == (
-        "Sent to Home Ops as ACME-43. The reply will be in Paperclip."
-    )
+    assert follow_up.response.speech["plain"]["speech"] == STILL_WORKING_NOTIFY
 
 
-async def test_reply_arrives_later_as_event(
+async def test_reply_arrives_later_as_event_and_notification(
     hass: HomeAssistant,
     init_integration: MockConfigEntry,
     fake: FakePaperclip,
 ) -> None:
-    """Without a reply in time, Assist says so and the reply comes as an event."""
+    """A late reply comes as an event and, once, as the promised notification."""
     events = async_capture_events(hass, EVENT_AGENT_REPLIED)
     result = await _say(hass, "Order more coffee beans")
     speech = result.response.speech["plain"]["speech"]
-    assert speech == "Sent to Home Ops as ACME-43. The reply will be in Paperclip."
+    assert speech == STILL_WORKING_NOTIFY
     assert events == []
 
     issue = next(i for i in fake.issues.values() if i["identifier"] == "ACME-43")
+    coordinator = init_integration.runtime_data.coordinator
+    assert coordinator.tracker.issues[issue["id"]].notify_late_reply is True
     fake.agent_comment(issue["id"], HOME_OPS_ID, "Ordered two bags.")
-    await init_integration.runtime_data.coordinator.async_refresh()
-    await hass.async_block_till_done()
-    assert len(events) == 1
+    with patch(NOTIFY) as notify:
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        notify.assert_called_once_with(
+            hass,
+            "Ordered two bags.\n\n"
+            "[ACME-43](http://paperclip.local:3100/ACME/issues/ACME-43)",
+            title="Home Ops replied",
+            notification_id=f"paperclip_{issue['id']}",
+        )
+        assert coordinator.tracker.issues[issue["id"]].notify_late_reply is False
+
+        # Only the reply Assist promised becomes a notification.
+        fake.agent_comment(issue["id"], HOME_OPS_ID, "They arrive on Friday.")
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        assert notify.call_count == 1
+    assert len(events) == 2
+    events = events[:1]
     assert events[0].data == {
         "config_entry_id": init_integration.entry_id,
         "company_id": COMPANY_ID,
@@ -210,3 +244,114 @@ async def test_default_project_name_is_resolved(
     assert result.response.response_type is intent.IntentResponseType.ACTION_DONE
     body = fake.calls_to("POST", f"/api/companies/{COMPANY_ID}/issues")[1][3]
     assert "projectId" not in body
+
+
+async def test_late_reply_without_notifications(
+    hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
+) -> None:
+    """With notifications off, Assist points to Paperclip and nothing is posted."""
+    hass.config_entries.async_update_entry(
+        init_integration,
+        options={**init_integration.options, CONF_NOTIFY_LATE_REPLIES: False},
+    )
+    await hass.async_block_till_done()
+    result = await _say(hass, "Order more coffee beans")
+    assert result.response.speech["plain"]["speech"] == STILL_WORKING_PAPERCLIP
+
+    coordinator = init_integration.runtime_data.coordinator
+    issue = next(i for i in fake.issues.values() if i["identifier"] == "ACME-43")
+    assert coordinator.tracker.issues[issue["id"]].notify_late_reply is False
+    fake.agent_comment(issue["id"], HOME_OPS_ID, "Ordered two bags.")
+    with patch(NOTIFY) as notify:
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+    notify.assert_not_called()
+
+
+async def test_assist_wait_is_capped(
+    hass: HomeAssistant, init_integration: MockConfigEntry
+) -> None:
+    """Assist never waits past the cap, whatever an old option says."""
+    hass.config_entries.async_update_entry(
+        init_integration, options={**init_integration.options, CONF_REPLY_WAIT: 300}
+    )
+    await hass.async_block_till_done()
+    coordinator = init_integration.runtime_data.coordinator
+    with patch.object(
+        coordinator, "async_wait_for_reply", AsyncMock(return_value=None)
+    ) as wait:
+        await _say(hass, "Order more coffee beans")
+    assert wait.call_args.args[1] == MAX_ASSIST_REPLY_WAIT
+
+
+async def test_reply_in_time_is_not_notified(
+    hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
+) -> None:
+    """A reply spoken by Assist leaves no notification promise behind."""
+
+    def reply(issue_id: str) -> None:
+        if not fake.comments.get(issue_id):
+            fake.agent_comment(issue_id, HOME_OPS_ID, "Done.")
+
+    fake.on_get_comments = reply
+    with patch(NOTIFY) as notify:
+        result = await _say(hass, "Close the garage")
+        assert result.response.speech["plain"]["speech"] == "Done."
+        coordinator = init_integration.runtime_data.coordinator
+        issue = next(i for i in fake.issues.values() if i["identifier"] == "ACME-43")
+        assert coordinator.tracker.issues[issue["id"]].notify_late_reply is False
+        fake.on_get_comments = None
+        fake.agent_comment(issue["id"], HOME_OPS_ID, "Also locked the side door.")
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+    notify.assert_not_called()
+
+
+async def _start_waiting_turn(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakePaperclip
+) -> tuple[asyncio.Task[conversation.ConversationResult], str]:
+    """Start an Assist turn with a long wait; return it and its issue id."""
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_REPLY_WAIT: 60}
+    )
+    await hass.async_block_till_done()
+    task = hass.async_create_task(_say(hass, "Order more coffee beans"))
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if any(i["identifier"] == "ACME-43" for i in fake.issues.values()):
+            break
+    issue = next(i for i in fake.issues.values() if i["identifier"] == "ACME-43")
+    return task, issue["id"]
+
+
+async def test_cancelled_turn_still_gets_its_notification(
+    hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
+) -> None:
+    """Closing the dialog mid-wait keeps the promise of a notification."""
+    task, issue_id = await _start_waiting_turn(hass, init_integration, fake)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    coordinator = init_integration.runtime_data.coordinator
+    assert coordinator.tracker.issues[issue_id].notify_late_reply is True
+
+    fake.agent_comment(issue_id, HOME_OPS_ID, "Ordered two bags.")
+    with patch(NOTIFY) as notify:
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+    assert notify.call_count == 1
+
+
+async def test_reload_during_wait_promises_nothing(
+    hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
+) -> None:
+    """A reload ends the wait without promising a notification it cannot keep."""
+    task, issue_id = await _start_waiting_turn(hass, init_integration, fake)
+    old_tracker = init_integration.runtime_data.coordinator.tracker
+    await hass.config_entries.async_reload(init_integration.entry_id)
+    await hass.async_block_till_done()
+    result = await task
+    assert result.response.speech["plain"]["speech"] == STILL_WORKING_PAPERCLIP
+    assert old_tracker.issues[issue_id].notify_late_reply is False
+    new_tracker = init_integration.runtime_data.coordinator.tracker
+    assert new_tracker.issues[issue_id].notify_late_reply is False

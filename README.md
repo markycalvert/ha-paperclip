@@ -85,15 +85,21 @@ What happens:
   example in `conversation.process`) is kept by Home Assistant after those 5
   minutes, so with it follow-ups continue the same issue until 15 minutes
   pass without a message.
-- Assist waits up to the **conversation reply wait** (default 20 s) for the
-  agent's comment and speaks it. The new issue tells the agent that its reply
-  is read aloud and asks for one or two plain sentences without markdown; common
+- Assist waits up to the **conversation reply wait** (default 90 s, at most
+  240 s, because an Assist pipeline gives up after 300 s) for the agent's
+  comment and speaks it. The new issue tells the agent that its reply is read
+  aloud and asks for one or two plain sentences without markdown; common
   markdown that remains (code, bold, italics, headings, lists, links) is
-  removed from the spoken text. The `paperclip_agent_replied` event and Paperclip keep the
-  original. If the agent is slower, Assist answers
-  "Sent to Home Ops as ACME-12. The reply will be in Paperclip." The reply
-  then arrives as a [`paperclip_agent_replied`](#paperclip_agent_replied)
-  event. Nothing tells you about it unless you add an automation such as
+  removed from the spoken text. The `paperclip_agent_replied` event and
+  Paperclip keep the original.
+- If the agent is slower, Assist answers "Home Ops is still working on it
+  (ACME-12). I'll send the answer as a notification." When the reply comes,
+  it appears as a Home Assistant notification (the bell in the sidebar) with a
+  link to the issue, and as a
+  [`paperclip_agent_replied`](#paperclip_agent_replied) event. Only the reply
+  Assist promised becomes a notification. Turn off **Send late Assist replies
+  as notifications** to get only the event; Assist then says "The answer will
+  be in Paperclip." For a push to your phone, add an automation such as
   [Get late replies as notifications](#get-late-replies-as-notifications).
 - To answer a late reply, use `paperclip.add_comment` with the issue
   identifier from the event (see the example below). Speaking to Assist again
@@ -131,6 +137,9 @@ automation:
 ```
 
 ### Get late replies as notifications
+
+The integration already shows late Assist replies in Home Assistant's
+notification panel. To get every late reply on your phone as well:
 
 ```yaml
 automation:
@@ -254,7 +263,8 @@ Paperclip rejects the key, Home Assistant starts a re-authentication flow.
 
 | Option | Default | Description |
 |---|---|---|
-| Conversation reply wait | 20 s (0 to 300) | How long an Assist conversation waits for the agent's reply. |
+| Conversation reply wait | 90 s (0 to 240) | How long an Assist conversation waits for the agent's reply before saying it is still being worked on. Before 0.1.4 the default was 20 s; an entry that still has 20 s is moved to 90 s, and a wait above 240 s is lowered to 240 s, when you upgrade. |
+| Send late Assist replies as notifications | on | When the agent answers after Assist stopped waiting, show the answer as a Home Assistant notification. |
 | Allow approvals from Home Assistant | off | Lets `paperclip.approve` and `paperclip.reject` decide approvals. |
 | Default project | none | Project for issues created from Home Assistant when an action does not name one. Pick it from the list, or type its name or id; a typed name is checked and stored as the project id. |
 

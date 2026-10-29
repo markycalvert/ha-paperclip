@@ -450,6 +450,8 @@ def mock_config_entry() -> MockConfigEntry:
             CONF_ALLOW_APPROVALS: False,
             CONF_DEFAULT_PROJECT: NO_PROJECT,
         },
+        version=1,
+        minor_version=2,
     )
 
 

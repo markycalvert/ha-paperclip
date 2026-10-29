@@ -73,11 +73,13 @@
         "title": "Paperclip options",
         "data": {
           "reply_wait": "Conversation reply wait",
+          "notify_late_replies": "Send late Assist replies as notifications",
           "allow_approvals": "Allow approvals from Home Assistant",
           "default_project": "Default project"
         },
         "data_description": {
-          "reply_wait": "How long an Assist conversation waits for the agent's reply before answering that the request was sent.",
+          "reply_wait": "How long an Assist conversation waits for the agent's answer before saying it is still being worked on (at most 240 seconds; Assist itself gives up after 300).",
+          "notify_late_replies": "When an agent answers after Assist stopped waiting, show the answer as a Home Assistant notification, so it is not only in Paperclip.",
           "allow_approvals": "Lets the approve and reject actions decide Paperclip approvals. Anyone who can run actions in Home Assistant could then approve hires and budget overrides.",
           "default_project": "Project for issues created from Home Assistant when an action does not name one. Pick it from the list, or type a project name or ID."
         }
@@ -248,7 +250,10 @@
       "message": "Approvals from Home Assistant are turned off for {title}. Turn on \"Allow approvals from Home Assistant\" in the integration options first."
     },
     "reply_pending": {
-      "message": "Sent to {agent} as {identifier}. The reply will be in Paperclip."
+      "message": "{agent} is still working on it ({identifier}). The answer will be in Paperclip."
+    },
+    "reply_notify": {
+      "message": "{agent} is still working on it ({identifier}). I'll send the answer as a notification."
     },
     "conversation_failed": {
       "message": "Sorry, I could not reach Paperclip: {error}"

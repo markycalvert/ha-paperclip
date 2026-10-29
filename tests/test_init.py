@@ -22,6 +22,7 @@ from pytest_homeassistant_custom_component.common import (
 from custom_components.paperclip import async_remove_config_entry_device
 from custom_components.paperclip.const import (
     CONF_DEFAULT_PROJECT,
+    CONF_REPLY_WAIT,
     DOMAIN,
     EVENT_AGENT_REPLIED,
     EVENT_ISSUE_STATUS_CHANGED,
@@ -449,3 +450,53 @@ async def test_reload_ends_reply_waits(
     assert [(e.data["body"], e.data["delivered"]) for e in events] == [
         ("Backups are fine.", False)
     ]
+
+
+@pytest.mark.parametrize(
+    ("stored", "migrated"),
+    [
+        # The old default, saved by every options form, becomes the new one.
+        ({CONF_REPLY_WAIT: 20}, {CONF_REPLY_WAIT: 90}),
+        # Waits beyond what an Assist pipeline allows are capped.
+        ({CONF_REPLY_WAIT: 300}, {CONF_REPLY_WAIT: 240}),
+        # A wait the user chose is kept.
+        ({CONF_REPLY_WAIT: 45}, {CONF_REPLY_WAIT: 45}),
+        ({}, {}),
+    ],
+)
+async def test_migrate_reply_wait(
+    hass: HomeAssistant,
+    fake: FakePaperclip,
+    mock_config_entry: MockConfigEntry,
+    stored: dict[str, int],
+    migrated: dict[str, int],
+) -> None:
+    """Version 1.1 entries get the new wait default and cap."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title=mock_config_entry.title,
+        unique_id=mock_config_entry.unique_id,
+        data=dict(mock_config_entry.data),
+        options=stored,
+        version=1,
+        minor_version=1,
+    )
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.minor_version == 2
+    assert dict(entry.options) == migrated
+
+
+async def test_migrate_from_future_version_fails(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """An entry from a newer release is left alone."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, data=dict(mock_config_entry.data), version=2, minor_version=1
+    )
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.MIGRATION_ERROR

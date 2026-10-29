@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, override
 from urllib.parse import quote
 
 from awesomeversion import AwesomeVersion, AwesomeVersionException
+from homeassistant.components import persistent_notification
 from homeassistant.core import CoreState, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
@@ -40,6 +41,8 @@ from .const import (
     COMMENT_FETCH_CONCURRENCY,
     CONF_COMPANY_ID,
     CONF_DEFAULT_PROJECT,
+    CONF_NOTIFY_LATE_REPLIES,
+    DEFAULT_NOTIFY_LATE_REPLIES,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     EVENT_AGENT_REPLIED,
@@ -250,6 +253,11 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
     @override
     async def _async_setup(self) -> None:
         await self.tracker.async_load()
+
+    @property
+    def stopping(self) -> bool:
+        """Return True once the entry is unloading."""
+        return self._stopping.is_set()
 
     @callback
     def async_stop_waits(self) -> None:
@@ -673,6 +681,22 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
                 "body": truncate(comment.body, REPLY_MAX_LENGTH),
                 "delivered": delivered,
             },
+        )
+        if not tracked.notify_late_reply:
+            return
+        # Assist promised this reply as a notification; keep that promise once.
+        self.tracker.set_notify_late_reply(tracked.id, notify=False)
+        if delivered or not self.config_entry.options.get(
+            CONF_NOTIFY_LATE_REPLIES, DEFAULT_NOTIFY_LATE_REPLIES
+        ):
+            return
+        identifier = tracked.identifier or tracked.id
+        url = self.issue_url(identifier)
+        persistent_notification.async_create(
+            self.hass,
+            f"{truncate(comment.body, REPLY_MAX_LENGTH)}\n\n[{identifier}]({url})",
+            title=f"{agent.name if agent else identifier} replied",
+            notification_id=f"{DOMAIN}_{tracked.id}",
         )
 
     def _fire_agent_events(self, state: PaperclipState) -> None:

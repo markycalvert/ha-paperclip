@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import unicodedata
 from typing import TYPE_CHECKING, Literal, override
@@ -13,10 +14,13 @@ from homeassistant.helpers.translation import async_get_translations
 
 from .api import Agent, PaperclipError
 from .const import (
+    CONF_NOTIFY_LATE_REPLIES,
     CONF_REPLY_WAIT,
+    DEFAULT_NOTIFY_LATE_REPLIES,
     DEFAULT_REPLY_WAIT,
     DOMAIN,
     LOGGER,
+    MAX_ASSIST_REPLY_WAIT,
     TITLE_MAX_LENGTH,
 )
 from .coordinator import PaperclipCoordinator, shorten
@@ -75,7 +79,14 @@ def plain_speech(text: str) -> str:
 
 
 FALLBACK_TEXT = {
-    "reply_pending": "Sent to {agent} as {identifier}. The reply will be in Paperclip.",
+    "reply_pending": (
+        "{agent} is still working on it ({identifier}). "
+        "The answer will be in Paperclip."
+    ),
+    "reply_notify": (
+        "{agent} is still working on it ({identifier}). "
+        "I'll send the answer as a notification."
+    ),
     "conversation_failed": "Sorry, I could not reach Paperclip: {error}",
 }
 
@@ -178,18 +189,38 @@ class PaperclipConversationEntity(
                 response=response, conversation_id=conversation_id
             )
 
-        reply = await coordinator.async_wait_for_reply(
-            tracked,
-            options.get(CONF_REPLY_WAIT, DEFAULT_REPLY_WAIT),
-            after=after,
+        # Promise the reply as a notification unless the entry is unloading:
+        # a reloaded entry starts a new tracker that would never keep it.
+        notify = (
+            options.get(CONF_NOTIFY_LATE_REPLIES, DEFAULT_NOTIFY_LATE_REPLIES)
+            and not coordinator.stopping
         )
+        try:
+            reply = await coordinator.async_wait_for_reply(
+                tracked,
+                min(
+                    options.get(CONF_REPLY_WAIT, DEFAULT_REPLY_WAIT),
+                    MAX_ASSIST_REPLY_WAIT,
+                ),
+                after=after,
+            )
+        except asyncio.CancelledError:
+            # The dialog closed or the satellite moved on: the person still
+            # asked, so the answer is still owed to them.
+            if notify and not coordinator.stopping:
+                coordinator.tracker.set_notify_late_reply(tracked.id, notify=True)
+            raise
         if reply is not None:
             text = plain_speech(reply.body)
         else:
+            notify = notify and not coordinator.stopping
+            # Set before any await: the regular poll may pick the reply up as
+            # soon as this wait has ended.
+            coordinator.tracker.set_notify_late_reply(tracked.id, notify=notify)
             text = await _async_text(
                 self.hass,
                 user_input.language,
-                "reply_pending",
+                "reply_notify" if notify else "reply_pending",
                 agent=agent_name,
                 identifier=tracked.identifier or tracked.id,
             )

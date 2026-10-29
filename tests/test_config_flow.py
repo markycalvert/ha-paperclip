@@ -20,6 +20,7 @@ from custom_components.paperclip.const import (
     CONF_ALLOW_APPROVALS,
     CONF_COMPANY_ID,
     CONF_DEFAULT_PROJECT,
+    CONF_NOTIFY_LATE_REPLIES,
     CONF_REPLY_WAIT,
     DOMAIN,
 )
@@ -308,6 +309,7 @@ async def test_options_flow(
         result["flow_id"],
         {
             CONF_REPLY_WAIT: 45.0,
+            CONF_NOTIFY_LATE_REPLIES: False,
             CONF_ALLOW_APPROVALS: True,
             CONF_DEFAULT_PROJECT: PROJECT_ID,
         },
@@ -315,6 +317,7 @@ async def test_options_flow(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert mock_config_entry.options == {
         CONF_REPLY_WAIT: 45,
+        CONF_NOTIFY_LATE_REPLIES: False,
         CONF_ALLOW_APPROVALS: True,
         CONF_DEFAULT_PROJECT: PROJECT_ID,
     }

@@ -20,7 +20,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.start import async_at_started
 
 from .api import PaperclipClient
-from .const import DOMAIN
+from .const import (
+    CONF_REPLY_WAIT,
+    DEFAULT_REPLY_WAIT,
+    DOMAIN,
+    LOGGER,
+    MAX_ASSIST_REPLY_WAIT,
+)
 from .coordinator import PaperclipCoordinator
 from .data import PaperclipConfigEntry, PaperclipData
 from .entity import agent_model, company_device_info
@@ -44,6 +50,27 @@ PLATFORMS: list[Platform] = [
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:  # noqa: ARG001
     """Register the integration's actions once, for every config entry."""
     async_setup_services(hass)
+    return True
+
+
+# Before 1.2 the options form stored the old 20 s default with every save, and
+# allowed waits up to 300 s, beyond what an Assist pipeline allows.
+_OLD_DEFAULT_REPLY_WAIT = 20
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: PaperclipConfigEntry) -> bool:
+    """Migrate an entry from an older version."""
+    if entry.version > 1:
+        return False
+    if entry.minor_version < 2:  # noqa: PLR2004
+        options = dict(entry.options)
+        if CONF_REPLY_WAIT in options:
+            wait = options[CONF_REPLY_WAIT]
+            if wait == _OLD_DEFAULT_REPLY_WAIT:
+                wait = DEFAULT_REPLY_WAIT
+            options[CONF_REPLY_WAIT] = min(wait, MAX_ASSIST_REPLY_WAIT)
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
+        LOGGER.debug("Migrated %s to version 1.2", entry.title)
     return True
 
 

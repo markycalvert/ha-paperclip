@@ -44,11 +44,13 @@ from .const import (
     CONF_ALLOW_APPROVALS,
     CONF_COMPANY_ID,
     CONF_DEFAULT_PROJECT,
+    CONF_NOTIFY_LATE_REPLIES,
     CONF_REPLY_WAIT,
+    DEFAULT_NOTIFY_LATE_REPLIES,
     DEFAULT_REPLY_WAIT,
     DOMAIN,
     LOGGER,
-    MAX_REPLY_WAIT,
+    MAX_ASSIST_REPLY_WAIT,
     NO_PROJECT,
 )
 from .coordinator import UUID_RE
@@ -107,7 +109,7 @@ class PaperclipConfigFlow(ConfigFlow, domain=DOMAIN):
     """Set up a Paperclip company."""
 
     VERSION = 1
-    MINOR_VERSION = 1
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         """Initialise the flow state."""
@@ -336,12 +338,15 @@ class PaperclipOptionsFlow(OptionsFlowWithReload):
                 ): NumberSelector(
                     NumberSelectorConfig(
                         min=0,
-                        max=MAX_REPLY_WAIT,
+                        max=MAX_ASSIST_REPLY_WAIT,
                         step=1,
                         unit_of_measurement="s",
                         mode=NumberSelectorMode.BOX,
                     )
                 ),
+                probatio.Required(
+                    CONF_NOTIFY_LATE_REPLIES, default=DEFAULT_NOTIFY_LATE_REPLIES
+                ): BooleanSelector(),
                 probatio.Required(
                     CONF_ALLOW_APPROVALS, default=False
                 ): BooleanSelector(),

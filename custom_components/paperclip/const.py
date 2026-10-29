@@ -17,11 +17,17 @@ CONF_COMPANY_ID: Final = "company_id"
 CONF_REPLY_WAIT: Final = "reply_wait"
 CONF_ALLOW_APPROVALS: Final = "allow_approvals"
 CONF_DEFAULT_PROJECT: Final = "default_project"
+CONF_NOTIFY_LATE_REPLIES: Final = "notify_late_replies"
 
 # Polling interval in seconds. Not an option: users who need other timing
 # disable polling for the entry and call homeassistant.update_entity.
 DEFAULT_SCAN_INTERVAL: Final = 60
-DEFAULT_REPLY_WAIT: Final = 20
+# How long Assist waits for the agent. Agents usually answer in 10-60 s; an
+# Assist pipeline gives up after 300 s, so the option stops well short of it.
+DEFAULT_REPLY_WAIT: Final = 90
+MAX_ASSIST_REPLY_WAIT: Final = 240
+DEFAULT_NOTIFY_LATE_REPLIES: Final = True
+# Longest wait_for_reply of an action (automations have no pipeline timeout).
 MAX_REPLY_WAIT: Final = 300
 NO_PROJECT: Final = "none"
 

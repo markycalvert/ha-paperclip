@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import TYPE_CHECKING, Literal, override
 
 from homeassistant.components import conversation
@@ -29,7 +31,48 @@ if TYPE_CHECKING:
     from .data import PaperclipConfigEntry
 
 PARALLEL_UPDATES = 0
-ASSIST_FOOTER = "\n\n_Sent from Home Assistant Assist._"
+ASSIST_FOOTER = (
+    "\n\n_Sent from Home Assistant Assist. The reply is read aloud: answer in "
+    "one or two plain sentences, without markdown._"
+)
+
+# An info string ("```bash") only counts when a newline follows it, so a fence
+# written on one line keeps its words.
+_FENCED_CODE = re.compile(r"```(?:[^\n`]*\n)?(.*?)```", re.DOTALL)
+_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+_INLINE_MARK = re.compile(r"(\*\*|__|`)(.+?)\1")
+_EMPHASIS = re.compile(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])")
+_LINE_PREFIX = re.compile(r"^\s*(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)")
+# Other punctuation, closing brackets and closing quotes already end a line.
+_SENTENCE_END_CATEGORIES = frozenset({"Po", "Pe", "Pf"})
+
+
+def plain_speech(text: str) -> str:
+    """
+    Turn an agent's markdown reply into text a voice assistant can read.
+
+    Agents usually answer in markdown, which text-to-speech reads literally.
+    Markup is removed and list items and paragraphs become sentences; the
+    words themselves are kept.
+    """
+    text = _FENCED_CODE.sub(lambda m: m.group(1).strip(), text)
+    text = _LINK.sub(r"\1", text)
+    text = _INLINE_MARK.sub(r"\2", text)
+    text = _EMPHASIS.sub(r"\1", text)
+    parts = []
+    for raw in text.splitlines():
+        line = raw
+        # Nested markers such as "> - item" come off one at a time.
+        while (stripped := _LINE_PREFIX.sub("", line, count=1)) != line:
+            line = stripped
+        line = line.strip()
+        if not line or set(line) <= set("-*_=|: "):
+            continue
+        if unicodedata.category(line[-1]) not in _SENTENCE_END_CATEGORIES:
+            line += "."
+        parts.append(line)
+    return " ".join(parts) or text.strip()
+
 
 FALLBACK_TEXT = {
     "reply_pending": "Sent to {agent} as {identifier}. The reply will be in Paperclip.",
@@ -141,7 +184,7 @@ class PaperclipConversationEntity(
             after=after,
         )
         if reply is not None:
-            text = reply.body
+            text = plain_speech(reply.body)
         else:
             text = await _async_text(
                 self.hass,

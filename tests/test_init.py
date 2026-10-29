@@ -222,8 +222,11 @@ async def test_outdated_server_raises_repair_issue(
     [
         ("2026.1006.0-beta.0", False),
         ("2026.1006.0", False),
-        ("2026.1005.3", True),
+        ("2026.1005.0", False),
+        ("2026.1004.9", True),
         ("2026.1001.0-canary.4", True),
+        # A beta build reports the last stable tag plus commits since.
+        ("2026.1005.0+135.git.0123abc", False),
         # A source checkout reports the package.json placeholder: unknown age.
         ("0.3.1", False),
         ("0.0.0", False),

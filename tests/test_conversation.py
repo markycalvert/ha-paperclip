@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import intent
@@ -11,8 +12,60 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.paperclip.const import CONF_DEFAULT_PROJECT, EVENT_AGENT_REPLIED
+from custom_components.paperclip.conversation import plain_speech
 
 from .conftest import COMPANY_ID, HOME_OPS_ID, PROJECT_ID, FakePaperclip
+
+
+@pytest.mark.parametrize(
+    ("markdown", "speech"),
+    [
+        ("Done.", "Done."),
+        ("All good", "All good."),
+        (
+            (
+                "Yes: the backup ran (job `nightly`, state `ok`).\n\n"
+                "- Checked read-only. Nothing was changed.\n"
+                "- Side note: an **update** is available."
+            ),
+            (
+                "Yes: the backup ran (job nightly, state ok). Checked read-only. "
+                "Nothing was changed. Side note: an update is available."
+            ),
+        ),
+        (
+            "## Summary\n1. First step\n2) Second step\n> quoted",
+            "Summary. First step. Second step. quoted.",
+        ),
+        (
+            "See [the docs](https://example.com/docs) for *details*.",
+            "See the docs for details.",
+        ),
+        ("Run:\n```bash\nreload all\n```", "Run: reload all."),
+        ("| a | b |\n|---|---|", "| a | b |."),
+        (
+            "Keep sensor.living_room_temp and 2 * 3 = 6",
+            "Keep sensor.living_room_temp and 2 * 3 = 6.",
+        ),
+        ("---", "---"),
+        # A fence on one line keeps its words.
+        ("```reload all```", "reload all."),
+        ("Run ```core check``` now", "Run core check now."),
+        # Nested list markers at any depth, and a list inside a quote.
+        (
+            "1. Kitchen\n    - lights off\n        - blinds down\n> - quoted item",
+            "Kitchen. lights off. blinds down. quoted item.",
+        ),
+        # Lines that already end in punctuation get no extra full stop.
+        # Full-width stop and exclamation mark (CJK).
+        ("你好。\n世界！", "你好。 世界！"),  # noqa: RUF001
+        ('He said "ok."\n(done)', 'He said "ok." (done)'),
+    ],
+)
+def test_plain_speech(markdown: str, speech: str) -> None:
+    """Agent markdown is read aloud as plain sentences."""
+    assert plain_speech(markdown) == speech
+
 
 AGENT = "conversation.home_ops"
 

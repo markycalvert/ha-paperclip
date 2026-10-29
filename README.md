@@ -86,7 +86,11 @@ What happens:
   minutes, so with it follow-ups continue the same issue until 15 minutes
   pass without a message.
 - Assist waits up to the **conversation reply wait** (default 20 s) for the
-  agent's comment and speaks it. If the agent is slower, Assist answers
+  agent's comment and speaks it. The new issue tells the agent that its reply
+  is read aloud and asks for one or two plain sentences without markdown; common
+  markdown that remains (code, bold, italics, headings, lists, links) is
+  removed from the spoken text. The `paperclip_agent_replied` event and Paperclip keep the
+  original. If the agent is slower, Assist answers
   "Sent to Home Ops as ACME-12. The reply will be in Paperclip." The reply
   then arrives as a [`paperclip_agent_replied`](#paperclip_agent_replied)
   event. Nothing tells you about it unless you add an automation such as
@@ -343,7 +347,7 @@ reply_comment_id: 66666666-6666-4666-8666-666666666666
 ```
 
 `reply` holds the first 2000 characters of the agent's comment; open `url` for
-the full text. Assist speaks the whole comment.
+the full text. Assist speaks the whole comment, with common markdown removed.
 
 Each call creates a new issue, even with the same text as an earlier one.
 
@@ -693,7 +697,7 @@ automation whenever you want fresh data (see
 | Component | Version |
 |---|---|
 | Home Assistant | 2026.9.0 or newer (tested with 2026.9.0, 2026.9.3 and 2026.10.4) |
-| Paperclip server | tested with 2026.1006.0-beta.0 (tag `beta/v2026.1006.0-beta.0`); older releases get a repair issue. A source checkout without release tags reports the placeholder version 0.3.1, which is not compared. |
+| Paperclip server | 2026.1005.0 or newer (tested with the `beta/v2026.1006.0-beta.0` build, which reports itself as 2026.1005.0 plus commits: beta and canary builds report the last stable release); older releases get a repair issue. A source checkout without release tags reports the placeholder version 0.3.1, which is not compared. |
 | Python | 3.14 (as required by Home Assistant) |
 
 ## Contributing

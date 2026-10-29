@@ -26,10 +26,13 @@ MAX_REPLY_WAIT: Final = 300
 NO_PROJECT: Final = "none"
 
 # Paperclip server version the integration was tested against. Paperclip
-# releases use CalVer (YYYY.MDD.N, betas YYYY.MDD.N-beta.N). Older servers get a
-# repair issue; newer ones are assumed to be compatible.
-MIN_PAPERCLIP_VERSION: Final = "2026.1006.0-beta.0"
-TESTED_PAPERCLIP_VERSION: Final = "2026.1006.0-beta.0"
+# releases use CalVer (YYYY.MDD.N). A server reports `git describe --match "v*"`,
+# so beta and canary builds (tags `beta/v...`, `canary/v...`) report the last
+# stable release plus commits since, e.g. 2026.1005.0+135.git.<sha> for the
+# tested beta/v2026.1006.0-beta.0 build. Older servers get a repair issue; newer
+# ones are assumed to be compatible.
+MIN_PAPERCLIP_VERSION: Final = "2026.1005.0"
+TESTED_PAPERCLIP_VERSION: Final = "2026.1005.0"
 # Versions a server reports when it cannot tell its real release (the source
 # package.json placeholder, or no version at all). They are never compared.
 PLACEHOLDER_PAPERCLIP_VERSIONS: Final = frozenset({"0.3.1", "0.0.0"})

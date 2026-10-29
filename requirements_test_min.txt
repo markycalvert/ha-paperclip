@@ -1,0 +1,7 @@
+# The oldest Home Assistant this integration supports, matching hacs.json
+# "homeassistant". Pins homeassistant==2026.9.0.
+pytest-homeassistant-custom-component==0.13.363
+# Requirements of that version's conversation integration.
+gazetteer-matcher==1.1.0
+hassil==3.12.0
+home-assistant-intents==2026.8.28

@@ -7,7 +7,7 @@
 [![Tests](https://github.com/markycalvert/ha-paperclip/actions/workflows/tests.yml/badge.svg)](https://github.com/markycalvert/ha-paperclip/actions/workflows/tests.yml)
 [![Lint](https://github.com/markycalvert/ha-paperclip/actions/workflows/lint.yml/badge.svg)](https://github.com/markycalvert/ha-paperclip/actions/workflows/lint.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-![Home Assistant 2026.10+](https://img.shields.io/badge/Home%20Assistant-2026.10%2B-41BDF5)
+![Home Assistant 2026.9+](https://img.shields.io/badge/Home%20Assistant-2026.9%2B-41BDF5)
 
 A Home Assistant integration for [Paperclip](https://github.com/paperclipai/paperclip),
 the open-source platform that runs a company of AI agents. It shows your
@@ -167,7 +167,7 @@ The comment continues the same issue, so the agent sees the whole thread.
 
 ## Requirements
 
-- Home Assistant **2026.10** or newer.
+- Home Assistant **2026.9** or newer.
 - A Paperclip server that Home Assistant can reach, for example
   `http://paperclip.local:3100`.
 - A **board API key** (it starts with `pcp_board_`) for a user who is a member
@@ -692,7 +692,7 @@ automation whenever you want fresh data (see
 
 | Component | Version |
 |---|---|
-| Home Assistant | 2026.10.0 or newer (tested with 2026.10.4) |
+| Home Assistant | 2026.9.0 or newer (tested with 2026.9.0, 2026.9.3 and 2026.10.4) |
 | Paperclip server | tested with 2026.1006.0-beta.0 (tag `beta/v2026.1006.0-beta.0`); older releases get a repair issue. A source checkout without release tags reports the placeholder version 0.3.1, which is not compared. |
 | Python | 3.14 (as required by Home Assistant) |
 

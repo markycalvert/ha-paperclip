@@ -168,8 +168,10 @@ def _resolve_agent(
     another Paperclip entry (another company) is refused.
     """
     if dr.async_get(hass).async_get(agent_ref) is not None:
+        # Agent devices belong to the entry directly. A foreign child device
+        # resolved through its parent fails the identifier check below.
         device, entry = service.async_get_device_and_config_entry(
-            hass, DOMAIN, agent_ref, include_child_devices=False
+            hass, DOMAIN, agent_ref
         )
         paperclip_entry = cast("PaperclipConfigEntry", entry)
         if entry_id and paperclip_entry.entry_id != entry_id:

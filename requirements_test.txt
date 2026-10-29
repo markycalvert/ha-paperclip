@@ -1,5 +1,7 @@
 -r requirements_lint.txt
-# Pins homeassistant==2026.10.4; keep hacs.json "homeassistant" in step.
+# Pins homeassistant==2026.10.4, the current stable release. The oldest
+# supported release (hacs.json "homeassistant") is tested from
+# requirements_test_min.txt.
 pytest-homeassistant-custom-component==0.13.375
 # Requirements of the conversation integration, which the tests set up
 # (Home Assistant installs these at runtime, but tests never call pip).

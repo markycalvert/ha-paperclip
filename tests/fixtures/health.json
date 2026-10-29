@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "version": "2026.1006.0-beta.0",
+  "serverVersion": "2026.1006.0-beta.0",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "deploymentMode": "authenticated",
+  "deploymentExposure": "private",
+  "authReady": true,
+  "bootstrapStatus": "ready",
+  "bootstrapInviteActive": false,
+  "features": {"companyDeletionEnabled": true},
+  "serverInfo": {"processStartedAt": "2026-01-05T09:00:00.000Z", "git": {}}
+}

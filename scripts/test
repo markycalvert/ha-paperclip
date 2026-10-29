@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Run the test suite with coverage (fails under 95 %).
+set -e
+
+cd "$(dirname "$0")/.."
+
+python3 -m pytest "$@"

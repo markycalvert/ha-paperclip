@@ -1,0 +1,86 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "server": {
+        "default": "mdi:server-network",
+        "state": {
+          "off": "mdi:server-network-off"
+        }
+      }
+    },
+    "button": {
+      "wake": {
+        "default": "mdi:alarm"
+      }
+    },
+    "sensor": {
+      "open_issues": {
+        "default": "mdi:clipboard-text-outline"
+      },
+      "pending_approvals": {
+        "default": "mdi:gavel"
+      },
+      "active_runs": {
+        "default": "mdi:run-fast"
+      },
+      "spend_this_month": {
+        "default": "mdi:cash"
+      },
+      "agent_spend_this_month": {
+        "default": "mdi:cash"
+      },
+      "last_heartbeat": {
+        "default": "mdi:heart-pulse"
+      },
+      "current_task": {
+        "default": "mdi:clipboard-play-outline",
+        "state": {
+          "none": "mdi:clipboard-outline"
+        }
+      },
+      "status": {
+        "default": "mdi:robot",
+        "state": {
+          "active": "mdi:robot",
+          "idle": "mdi:robot-outline",
+          "running": "mdi:robot-excited",
+          "paused": "mdi:pause-circle-outline",
+          "error": "mdi:robot-dead",
+          "pending_approval": "mdi:account-clock",
+          "terminated": "mdi:robot-off"
+        }
+      }
+    },
+    "switch": {
+      "enabled": {
+        "default": "mdi:play-circle-outline",
+        "state": {
+          "off": "mdi:pause-circle-outline"
+        }
+      }
+    }
+  },
+  "services": {
+    "ask_agent": {
+      "service": "mdi:robot-outline"
+    },
+    "add_comment": {
+      "service": "mdi:comment-text-outline"
+    },
+    "create_issue": {
+      "service": "mdi:clipboard-plus-outline"
+    },
+    "wake_agent": {
+      "service": "mdi:alarm"
+    },
+    "fire_routine_webhook": {
+      "service": "mdi:webhook"
+    },
+    "approve": {
+      "service": "mdi:check-decagram"
+    },
+    "reject": {
+      "service": "mdi:close-octagon"
+    }
+  }
+}

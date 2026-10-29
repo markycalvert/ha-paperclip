@@ -1,0 +1,8 @@
+-r requirements_lint.txt
+# Pins homeassistant==2026.10.4; keep hacs.json "homeassistant" in step.
+pytest-homeassistant-custom-component==0.13.375
+# Requirements of the conversation integration, which the tests set up
+# (Home Assistant installs these at runtime, but tests never call pip).
+gazetteer-matcher==1.1.0
+hassil==3.12.1
+home-assistant-intents==2026.10.6

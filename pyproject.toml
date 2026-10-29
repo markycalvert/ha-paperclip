@@ -1,0 +1,66 @@
+[project]
+name = "ha-paperclip"
+version = "0.1.0"
+description = "Home Assistant custom integration for Paperclip, the open-source AI-agent orchestration platform."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.14.2"
+
+[tool.ruff]
+# Settings follow ludeeus/integration_blueprint.
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "ANN401", # Dynamically typed expressions (typing.Any) are disallowed
+    "D203",   # no-blank-line-before-class (incompatible with formatter)
+    "D212",   # multi-line-summary-first-line (incompatible with formatter)
+    "COM812", # incompatible with formatter
+    "ISC001", # incompatible with formatter
+    "CPY001", # no per-file copyright headers; the licence is in LICENSE
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",    # assert is how pytest checks things
+    "PLR2004", # magic values are fine in tests
+    "SLF001",  # tests may poke at private members
+    "ARG001",  # fixtures are often requested only for their side effects
+    "S105",    # sample tokens are not secrets
+    "S106",
+    "PLR0913",
+    "PLR0917", # parametrised tests take many arguments
+    "FBT001",
+    "TC001",   # type-only imports in tests stay at runtime for readability
+    "TC002",
+    "TC003",
+]
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true
+
+[tool.ruff.lint.mccabe]
+max-complexity = 25
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--cov=custom_components.paperclip --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["custom_components.paperclip"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "pragma: no cover",
+]

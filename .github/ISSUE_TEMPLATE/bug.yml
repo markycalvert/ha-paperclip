@@ -1,0 +1,76 @@
+name: Bug report
+description: Something in the Paperclip integration does not work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Please remove anything private (server
+        addresses, keys, agent or company names you would rather not share)
+        from logs before you paste them.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Call paperclip.ask_agent with ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      placeholder: "2026.10.4"
+    validations:
+      required: true
+  - type: input
+    id: paperclip_version
+    attributes:
+      label: Paperclip server version
+      description: Shown as the firmware version of the company device, or by GET /api/health.
+      placeholder: "0.3.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment_mode
+    attributes:
+      label: Paperclip deployment mode
+      options:
+        - authenticated
+        - local_trusted
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        In Home Assistant open Settings, Devices & services, Paperclip, then the
+        three-dot menu, and choose "Download diagnostics". Drag the file here.
+        Keys, URLs, names, titles and comment bodies are redacted automatically.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug log
+      description: |
+        Enable debug logging for the integration, reproduce the problem, then
+        paste the relevant lines.
+      render: text

@@ -1,0 +1,191 @@
+ask_agent:
+  fields:
+    agent:
+      required: true
+      selector:
+        device:
+          integration: paperclip
+          entity:
+            - integration: paperclip
+              domain: conversation
+    message:
+      required: true
+      example: "Is the garage door closed? If not, tell me who opened it last."
+      selector:
+        text:
+          multiline: true
+    title:
+      example: "Check the garage door"
+      selector:
+        text:
+    project:
+      example: "Household"
+      selector:
+        text:
+    priority:
+      selector:
+        select:
+          translation_key: priority
+          options:
+            - critical
+            - high
+            - medium
+            - low
+    wait_for_reply:
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 1
+          unit_of_measurement: s
+          mode: box
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: paperclip
+
+create_issue:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: paperclip
+    title:
+      required: true
+      example: "Replace the hallway smoke alarm battery"
+      selector:
+        text:
+    description:
+      example: "Reported by Home Assistant at 07:00."
+      selector:
+        text:
+          multiline: true
+    assignee:
+      selector:
+        device:
+          integration: paperclip
+          entity:
+            - integration: paperclip
+              domain: conversation
+    project:
+      example: "Household"
+      selector:
+        text:
+    priority:
+      selector:
+        select:
+          translation_key: priority
+          options:
+            - critical
+            - high
+            - medium
+            - low
+    allow_duplicate:
+      default: false
+      selector:
+        boolean:
+
+add_comment:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: paperclip
+    issue:
+      required: true
+      example: "ACME-12"
+      selector:
+        text:
+    message:
+      required: true
+      example: "The sensor reports closed again."
+      selector:
+        text:
+          multiline: true
+    wait_for_reply:
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 1
+          unit_of_measurement: s
+          mode: box
+
+wake_agent:
+  fields:
+    agent:
+      required: true
+      selector:
+        device:
+          integration: paperclip
+          entity:
+            - integration: paperclip
+              domain: conversation
+    reason:
+      example: "Motion detected in the office"
+      selector:
+        text:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: paperclip
+
+fire_routine_webhook:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: paperclip
+    public_id:
+      required: true
+      example: "0123456789abcdef01234567"
+      selector:
+        text:
+    secret:
+      selector:
+        text:
+          type: password
+    payload:
+      example: '{"event": "doorbell", "variables": {"room": "hall"}}'
+      selector:
+        object:
+    idempotency_key:
+      selector:
+        text:
+
+approve:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: paperclip
+    approval_id:
+      required: true
+      selector:
+        text:
+    decision_note:
+      selector:
+        text:
+          multiline: true
+
+reject:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: paperclip
+    approval_id:
+      required: true
+      selector:
+        text:
+    decision_note:
+      selector:
+        text:
+          multiline: true

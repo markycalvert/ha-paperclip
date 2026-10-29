@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Problems with the Paperclip server itself
+    url: https://github.com/paperclipai/paperclip/issues
+    about: Bugs in Paperclip (not in this integration) belong upstream.

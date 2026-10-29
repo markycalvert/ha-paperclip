@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest an idea for the Paperclip integration.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the use case, for example an automation you want to build.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: api
+    attributes:
+      label: Paperclip API
+      description: If you know which Paperclip API route would provide this, mention it.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics (optional)
+      description: If the request relates to your setup, attach the downloaded diagnostics file.

@@ -1,0 +1,29 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    ignore:
+      # These move together, by hand, with hacs.json "homeassistant": every
+      # pytest-homeassistant-custom-component release pins one exact
+      # homeassistant version, and hassil, home-assistant-intents and
+      # gazetteer-matcher are pinned to that version's conversation manifest.
+      # Bumped one at a time they cannot install together.
+      - dependency-name: homeassistant
+      - dependency-name: pytest-homeassistant-custom-component
+      - dependency-name: hassil
+      - dependency-name: home-assistant-intents
+      - dependency-name: gazetteer-matcher

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Format and lint with ruff, fixing what can be fixed automatically.
+set -e
+
+cd "$(dirname "$0")/.."
+
+ruff format .
+ruff check . --fix

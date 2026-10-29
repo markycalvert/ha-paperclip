@@ -1,0 +1,420 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Paperclip",
+        "description": "Enter the address of your Paperclip server, for example {example_url}. A board API key is needed unless the server runs in `local_trusted` mode.",
+        "data": {
+          "url": "Server URL",
+          "api_key": "Board API key",
+          "verify_ssl": "Verify SSL certificate"
+        },
+        "data_description": {
+          "url": "The base URL you open Paperclip at, without `/api`.",
+          "api_key": "A board API key (starts with `pcp_board_`), created with `paperclipai token board create --never-expires`. Leave empty for a `local_trusted` server. Agent keys are not supported.",
+          "verify_ssl": "Turn off only for an HTTPS server with a self-signed certificate."
+        }
+      },
+      "company": {
+        "title": "Choose a company",
+        "description": "This key can open more than one Paperclip company. Each company is added as its own entry.",
+        "data": {
+          "company_id": "Company"
+        },
+        "data_description": {
+          "company_id": "The company whose agents and issues Home Assistant should follow."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate {title}",
+        "description": "Paperclip at {url} rejected the stored key. Enter a new board API key, or leave it empty for a `local_trusted` server.",
+        "data": {
+          "api_key": "Board API key"
+        },
+        "data_description": {
+          "api_key": "A board API key (starts with `pcp_board_`) for a user who is a member of this company."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Paperclip",
+        "description": "Change the server address or key, for example {example_url}.",
+        "data": {
+          "url": "Server URL",
+          "api_key": "Board API key",
+          "verify_ssl": "Verify SSL certificate"
+        },
+        "data_description": {
+          "url": "The base URL you open Paperclip at, without `/api`.",
+          "api_key": "Leave empty to keep the current key.",
+          "verify_ssl": "Turn off only for an HTTPS server with a self-signed certificate."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to Paperclip. Check the URL and that the server is running.",
+      "invalid_auth": "Paperclip rejected the key, or the key has no access to any company.",
+      "invalid_url": "Enter a full http:// or https:// URL.",
+      "agent_key": "That is an agent API key. Use a board API key (it starts with `pcp_board_`).",
+      "hostname_not_allowed": "Paperclip refused this hostname. On the Paperclip server run `npx paperclipai allowed-hostname HOSTNAME` with the host you entered, then try again.",
+      "no_companies": "The key works, but it cannot open any company.",
+      "company_not_found": "The key cannot open the company this entry was set up for.",
+      "unknown": "Unexpected error. See the Home Assistant log for details."
+    },
+    "abort": {
+      "already_configured": "This Paperclip company is already configured.",
+      "reauth_successful": "Re-authentication was successful.",
+      "reconfigure_successful": "Re-configuration was successful.",
+      "wrong_company": "This entry belongs to a different Paperclip company."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Paperclip options",
+        "data": {
+          "scan_interval": "Polling interval",
+          "reply_wait": "Conversation reply wait",
+          "allow_approvals": "Allow approvals from Home Assistant",
+          "default_project": "Default project"
+        },
+        "data_description": {
+          "scan_interval": "How often to poll Paperclip, in seconds (15 or more).",
+          "reply_wait": "How long an Assist conversation waits for the agent's reply before answering that the request was sent.",
+          "allow_approvals": "Lets the approve and reject actions decide Paperclip approvals. Anyone who can run actions in Home Assistant could then approve hires and budget overrides.",
+          "default_project": "Project for issues created from Home Assistant when an action does not name one. Pick it from the list, or type a project name or ID."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to Paperclip to look up the project. Pick it from the list or enter its ID.",
+      "project_not_found": "No Paperclip project has that name. Pick a project from the list or enter its ID."
+    }
+  },
+  "selector": {
+    "default_project": {
+      "options": {
+        "none": "No project"
+      }
+    },
+    "priority": {
+      "options": {
+        "critical": "Critical",
+        "high": "High",
+        "medium": "Medium",
+        "low": "Low"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "server": {
+        "name": "Server"
+      }
+    },
+    "button": {
+      "wake": {
+        "name": "Wake"
+      }
+    },
+    "sensor": {
+      "open_issues": {
+        "name": "Open issues"
+      },
+      "pending_approvals": {
+        "name": "Pending approvals"
+      },
+      "active_runs": {
+        "name": "Active runs"
+      },
+      "spend_this_month": {
+        "name": "Spend this month"
+      },
+      "agent_spend_this_month": {
+        "name": "Spend this month"
+      },
+      "last_heartbeat": {
+        "name": "Last heartbeat"
+      },
+      "current_task": {
+        "name": "Current task",
+        "state": {
+          "none": "No current task"
+        },
+        "state_attributes": {
+          "run_id": {
+            "name": "Run ID"
+          },
+          "run_status": {
+            "name": "Run status"
+          },
+          "issue_id": {
+            "name": "Issue ID"
+          },
+          "identifier": {
+            "name": "Identifier"
+          },
+          "url": {
+            "name": "URL"
+          }
+        }
+      },
+      "status": {
+        "name": "Status",
+        "state": {
+          "active": "Active",
+          "idle": "Idle",
+          "running": "Running",
+          "paused": "Paused",
+          "error": "Error",
+          "pending_approval": "Pending approval",
+          "terminated": "Terminated"
+        }
+      }
+    },
+    "switch": {
+      "enabled": {
+        "name": "Enabled"
+      }
+    }
+  },
+  "exceptions": {
+    "invalid_auth": {
+      "message": "Paperclip rejected the board API key."
+    },
+    "hostname_not_allowed": {
+      "message": "Paperclip refused the hostname Home Assistant uses. Allow it on the server with `npx paperclipai allowed-hostname HOSTNAME`."
+    },
+    "rate_limited": {
+      "message": "Paperclip asked Home Assistant to slow down."
+    },
+    "company_not_found": {
+      "message": "The Paperclip company of this entry no longer exists or is not visible to the key."
+    },
+    "cannot_connect": {
+      "message": "Error talking to Paperclip: {error}"
+    },
+    "pause_failed": {
+      "message": "Could not pause {agent}: {error}"
+    },
+    "resume_failed": {
+      "message": "Could not resume {agent}: {error}"
+    },
+    "wake_failed": {
+      "message": "Could not wake {agent}: {error}"
+    },
+    "not_an_agent": {
+      "message": "{agent} is not a Paperclip agent device."
+    },
+    "agent_not_found": {
+      "message": "No loaded Paperclip entry has an agent called {agent}."
+    },
+    "agent_ambiguous": {
+      "message": "More than one Paperclip agent matches {agent}. Pick the agent device or give the config entry."
+    },
+    "not_found": {
+      "message": "Paperclip could not find it: {error}"
+    },
+    "api_error": {
+      "message": "Paperclip returned an error: {error}"
+    },
+    "forbidden": {
+      "message": "Paperclip refused this action for the board API key: {error}"
+    },
+    "project_not_found": {
+      "message": "No Paperclip project is called {project}."
+    },
+    "invalid_public_id": {
+      "message": "The routine trigger public ID must be 24 lowercase hexadecimal characters, or the trigger's full webhook URL."
+    },
+    "webhook_rejected": {
+      "message": "Paperclip rejected the routine webhook (HTTP {status}): {error}"
+    },
+    "approvals_disabled": {
+      "message": "Approvals from Home Assistant are turned off for {title}. Turn on \"Allow approvals from Home Assistant\" in the integration options first."
+    },
+    "reply_pending": {
+      "message": "Sent to {agent} as {identifier}. I'll let you know when they reply."
+    },
+    "conversation_failed": {
+      "message": "Sorry, I could not reach Paperclip: {error}"
+    }
+  },
+  "issues": {
+    "outdated_paperclip": {
+      "title": "Paperclip server is older than supported",
+      "description": "The Paperclip server for {title} reports version {version}. This integration is tested with {minimum} and newer, so some entities or actions may not work. Update Paperclip to fix this."
+    }
+  },
+  "services": {
+    "ask_agent": {
+      "name": "Ask agent",
+      "description": "Sends a request to a chosen Paperclip agent as a new issue assigned to it, and optionally waits for the agent's reply.",
+      "fields": {
+        "agent": {
+          "name": "Agent",
+          "description": "The agent device, or an agent ID or name."
+        },
+        "message": {
+          "name": "Message",
+          "description": "What you want the agent to do. Becomes the issue description."
+        },
+        "title": {
+          "name": "Title",
+          "description": "Issue title. Defaults to the start of the message."
+        },
+        "project": {
+          "name": "Project",
+          "description": "Project ID or name. Defaults to the project set in the options."
+        },
+        "priority": {
+          "name": "Priority",
+          "description": "Issue priority. Paperclip defaults to medium."
+        },
+        "wait_for_reply": {
+          "name": "Wait for reply",
+          "description": "Seconds to wait for the agent's first comment (0 to 300). 0 returns at once. Only waits when the reply is used as response data."
+        },
+        "config_entry_id": {
+          "name": "Paperclip entry",
+          "description": "Only needed when an agent ID or name could belong to more than one Paperclip entry."
+        }
+      }
+    },
+    "create_issue": {
+      "name": "Create issue",
+      "description": "Creates a Paperclip issue, optionally assigned to an agent (which wakes it).",
+      "fields": {
+        "config_entry_id": {
+          "name": "Paperclip entry",
+          "description": "The Paperclip company to act on."
+        },
+        "title": {
+          "name": "Title",
+          "description": "Issue title."
+        },
+        "description": {
+          "name": "Description",
+          "description": "Issue description in Markdown."
+        },
+        "assignee": {
+          "name": "Assignee",
+          "description": "The agent device, or an agent ID or name. Leave empty for an unassigned backlog issue."
+        },
+        "project": {
+          "name": "Project",
+          "description": "Project ID or name. Defaults to the project set in the options."
+        },
+        "priority": {
+          "name": "Priority",
+          "description": "Issue priority. Paperclip defaults to medium."
+        },
+        "allow_duplicate": {
+          "name": "Allow duplicate",
+          "description": "Paperclip returns an existing open issue with the same title from the last 48 hours instead of creating a new one, unless this is on."
+        }
+      }
+    },
+    "add_comment": {
+      "name": "Add comment",
+      "description": "Adds a comment to a Paperclip issue, which wakes its assignee, and optionally waits for the agent's reply.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Paperclip entry",
+          "description": "The Paperclip company to act on."
+        },
+        "issue": {
+          "name": "Issue",
+          "description": "Issue ID or identifier, for example ACME-12."
+        },
+        "message": {
+          "name": "Message",
+          "description": "Comment text in Markdown."
+        },
+        "wait_for_reply": {
+          "name": "Wait for reply",
+          "description": "Seconds to wait for an agent comment after yours (0 to 300). Only waits when the reply is used as response data."
+        }
+      }
+    },
+    "wake_agent": {
+      "name": "Wake agent",
+      "description": "Starts an on-demand heartbeat run for a Paperclip agent.",
+      "fields": {
+        "agent": {
+          "name": "Agent",
+          "description": "The agent device, or an agent ID or name."
+        },
+        "reason": {
+          "name": "Reason",
+          "description": "Why the agent is being woken. Shown in Paperclip."
+        },
+        "config_entry_id": {
+          "name": "Paperclip entry",
+          "description": "Only needed when an agent ID or name could belong to more than one Paperclip entry."
+        }
+      }
+    },
+    "fire_routine_webhook": {
+      "name": "Fire routine webhook",
+      "description": "Fires a Paperclip routine's webhook trigger, signed with HMAC-SHA256. The board API key is not sent.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Paperclip entry",
+          "description": "The Paperclip server to send the webhook to."
+        },
+        "public_id": {
+          "name": "Public ID",
+          "description": "The trigger's public ID (24 hex characters) or its full webhook URL."
+        },
+        "secret": {
+          "name": "Signing secret",
+          "description": "The trigger's webhook secret, for triggers in `hmac_sha256` mode. Leave empty only for unsigned (`none`) triggers."
+        },
+        "payload": {
+          "name": "Payload",
+          "description": "JSON object sent as the body. Top-level fields or a nested `variables` object fill routine variables."
+        },
+        "idempotency_key": {
+          "name": "Idempotency key",
+          "description": "Optional key that stops Paperclip from running the same delivery twice."
+        }
+      }
+    },
+    "approve": {
+      "name": "Approve",
+      "description": "Approves a pending Paperclip approval. Only works when approvals are allowed in the integration options.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Paperclip entry",
+          "description": "The Paperclip company to act on."
+        },
+        "approval_id": {
+          "name": "Approval ID",
+          "description": "The approval to decide, as sent in the paperclip_approval_requested event."
+        },
+        "decision_note": {
+          "name": "Decision note",
+          "description": "Optional note stored with the decision."
+        }
+      }
+    },
+    "reject": {
+      "name": "Reject",
+      "description": "Rejects a pending Paperclip approval. Only works when approvals are allowed in the integration options.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Paperclip entry",
+          "description": "The Paperclip company to act on."
+        },
+        "approval_id": {
+          "name": "Approval ID",
+          "description": "The approval to decide, as sent in the paperclip_approval_requested event."
+        },
+        "decision_note": {
+          "name": "Decision note",
+          "description": "Optional note stored with the decision."
+        }
+      }
+    }
+  }
+}

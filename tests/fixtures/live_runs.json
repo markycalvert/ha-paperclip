@@ -1,0 +1,19 @@
+[
+  {
+    "id": "44444444-4444-4444-8444-444444444444",
+    "status": "running",
+    "invocationSource": "assignment",
+    "triggerDetail": "system",
+    "startedAt": "2026-01-05T08:59:00.000Z",
+    "finishedAt": null,
+    "createdAt": "2026-01-05T08:58:59.000Z",
+    "agentId": "33333333-3333-4333-8333-333333333334",
+    "agentName": "Engineer",
+    "adapterType": "claude_local",
+    "issueId": "55555555-5555-4555-8555-555555555500",
+    "livenessState": "active",
+    "nextAction": null,
+    "lastOutputAt": "2026-01-05T08:59:30.000Z",
+    "processStartedAt": "2026-01-05T08:59:00.000Z"
+  }
+]

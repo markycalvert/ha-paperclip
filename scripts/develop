@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Start a local Home Assistant with this integration loaded from the repo.
+set -e
+
+cd "$(dirname "$0")/.."
+
+# Create the config folder if it does not exist yet.
+if [[ ! -d "${PWD}/config" ]]; then
+    mkdir -p "${PWD}/config"
+    hass --config "${PWD}/config" --script ensure_config
+fi
+
+# Load custom_components/paperclip straight from the repository.
+export PYTHONPATH="${PYTHONPATH}:${PWD}/custom_components"
+
+hass --config "${PWD}/config" --debug

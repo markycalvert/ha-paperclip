@@ -1,0 +1,11 @@
+{
+  "companyId": "11111111-1111-4111-8111-111111111111",
+  "agents": {"active": 1, "running": 1, "paused": 1, "error": 0},
+  "tasks": {"open": 7, "inProgress": 2, "blocked": 1, "done": 30},
+  "costs": {"monthSpendCents": 1234, "monthBudgetCents": 50000, "monthUtilizationPercent": 2.47},
+  "pendingApprovals": 1,
+  "budgets": {"activeIncidents": 0, "pendingApprovals": 0, "pausedAgents": 0, "pausedProjects": 0},
+  "runActivity": [
+    {"date": "2026-01-05", "succeeded": 4, "failed": 0, "recovered": 0, "other": 1, "total": 5, "failedByErrorCode": {}}
+  ]
+}

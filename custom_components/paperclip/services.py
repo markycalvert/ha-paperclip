@@ -24,6 +24,8 @@ from homeassistant.helpers import (
 from homeassistant.helpers import (
     service,
 )
+from homeassistant.helpers.json import json_bytes
+from homeassistant.util.json import json_loads_object
 
 from .api import (
     PaperclipAuthError,
@@ -380,10 +382,21 @@ async def _async_fire_routine_webhook(call: ServiceCall) -> ServiceResponse:
         raise ServiceValidationError(
             translation_domain=DOMAIN, translation_key="invalid_public_id"
         )
+    # Service data can hold values plain JSON cannot (a YAML date, a set).
+    # Home Assistant's encoder writes dates as ISO strings and sets as lists;
+    # anything it cannot encode is the caller's mistake.
+    try:
+        payload = json_loads_object(json_bytes(call.data[ATTR_PAYLOAD]))
+    except (TypeError, ValueError) as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_payload",
+            translation_placeholders={"error": str(err)},
+        ) from err
     try:
         result = await entry.runtime_data.client.fire_routine_webhook(
             public_id,
-            call.data[ATTR_PAYLOAD],
+            payload,
             secret=call.data.get(ATTR_SECRET),
             idempotency_key=call.data.get(ATTR_IDEMPOTENCY_KEY),
         )

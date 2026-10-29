@@ -18,6 +18,7 @@ from custom_components.paperclip.api import (
     Health,
     PaperclipClient,
     PaperclipConnectionError,
+    PaperclipInvalidResponseError,
     PaperclipRateLimitError,
     PaperclipResponseError,
     is_agent_key,
@@ -142,15 +143,38 @@ async def test_webhook_transport_error(
 async def test_non_json_and_no_key(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:
-    """Without a key no Authorization header is sent; odd bodies are tolerated."""
-    aioclient_mock.get(f"{BASE_URL}/api/health", text="not json")
-    aioclient_mock.get(f"{BASE_URL}/api/companies", json={"unexpected": True})
+    """Without a key no Authorization header is sent; odd fields are tolerated."""
+    aioclient_mock.get(f"{BASE_URL}/api/health", json={"unexpected": True})
     client = PaperclipClient(async_get_clientsession(hass), BASE_URL + "/", "")
     health = await client.get_health()
     assert health.status == "unknown"
-    assert await client.list_companies() == []
     headers = aioclient_mock.mock_calls[0][3]
     assert "Authorization" not in headers
+
+
+@pytest.mark.parametrize(
+    ("path", "kwargs"),
+    [
+        # A proxy or captive portal answering 200 with its own page.
+        ("/api/companies", {"text": "<html><body>Sign in</body></html>"}),
+        ("/api/companies", {"json": {"unexpected": True}}),
+        ("/api/companies", {"text": ""}),
+        ("/api/health", {"text": "<html><body>Sign in</body></html>"}),
+        ("/api/health", {"json": []}),
+    ],
+)
+async def test_successful_status_with_wrong_body_is_an_error(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    path: str,
+    kwargs: dict[str, Any],
+) -> None:
+    """A 2xx body that is not the JSON Paperclip sends is never read as empty."""
+    aioclient_mock.get(f"{BASE_URL}{path}", **kwargs)
+    client = PaperclipClient(async_get_clientsession(hass), BASE_URL)
+    call = client.list_companies if path == "/api/companies" else client.get_health
+    with pytest.raises(PaperclipInvalidResponseError):
+        await call()
 
 
 async def test_ids_are_escaped_in_paths(

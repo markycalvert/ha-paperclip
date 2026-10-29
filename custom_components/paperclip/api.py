@@ -45,6 +45,17 @@ class PaperclipResponseError(PaperclipError):
         self.message = message
 
 
+class PaperclipInvalidResponseError(PaperclipError):
+    """
+    A successful status came with a body that is not what Paperclip sends.
+
+    Paperclip answers every API route with JSON, so a 2xx body of another
+    shape (an HTML page from a proxy or captive portal) never comes from
+    Paperclip itself. Reading it as an empty list would look like a company
+    without agents and remove their devices.
+    """
+
+
 class PaperclipAuthError(PaperclipResponseError):
     """The credentials were rejected (401) or lack access (403)."""
 
@@ -312,12 +323,14 @@ class Issue:
     created_at: datetime | None
     updated_at: datetime | None
     deduplicated: bool = False
+    company_id: str | None = None
 
     @classmethod
     def from_dict(cls, data: JsonObject) -> Issue:
         """Build from the API payload."""
         return cls(
             id=_str(data, "id"),
+            company_id=_opt_str(data, "companyId"),
             identifier=_opt_str(data, "identifier"),
             title=_str(data, "title"),
             status=_str(data, "status", "todo"),
@@ -512,15 +525,19 @@ class PaperclipClient:
         self, path: str, params: dict[str, str] | None = None
     ) -> list[JsonObject]:
         payload = await self._request("GET", path, params=params)
-        if isinstance(payload, list):
-            return [item for item in payload if isinstance(item, dict)]
-        return []
+        if not isinstance(payload, list):
+            msg = f"Expected a JSON list from {self.base_url}/api{path}"
+            raise PaperclipInvalidResponseError(msg)
+        return [item for item in payload if isinstance(item, dict)]
 
     async def _get_object(
         self, path: str, params: dict[str, str] | None = None
     ) -> JsonObject:
         payload = await self._request("GET", path, params=params)
-        return payload if isinstance(payload, dict) else {}
+        if not isinstance(payload, dict):
+            msg = f"Expected a JSON object from {self.base_url}/api{path}"
+            raise PaperclipInvalidResponseError(msg)
+        return payload
 
     async def _post_object(
         self, path: str, body: JsonObject | None = None
@@ -788,6 +805,7 @@ __all__ = [
     "PaperclipError",
     "PaperclipForbiddenError",
     "PaperclipHostnameNotAllowedError",
+    "PaperclipInvalidResponseError",
     "PaperclipNotFoundError",
     "PaperclipRateLimitError",
     "PaperclipResponseError",

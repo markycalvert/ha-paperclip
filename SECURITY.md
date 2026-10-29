@@ -27,6 +27,10 @@ Problems in the Paperclip server itself belong to the
   that request. They are not stored by the integration.
 - Issue ids, titles, statuses and conversation-to-issue links are stored in
   `.storage/paperclip.<entry id>` so replies can be matched after a restart.
+- Agent reply text (up to 2000 characters) is put on Home Assistant's event bus
+  as the `body` of `paperclip_agent_replied`, so the recorder stores it in the
+  event history unless that event is excluded. Actions that return a reply
+  also keep it in their automation or script trace.
 
 See "Security notes" in the [README](README.md#security-notes) for the
 permissions a board key carries.

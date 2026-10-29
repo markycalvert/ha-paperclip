@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, override
 from urllib.parse import quote
 
 from awesomeversion import AwesomeVersion, AwesomeVersionException
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CoreState, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -316,7 +316,12 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
             "live_runs", lambda: client.list_live_runs(cid)
         )
         current_tasks = await self._async_current_tasks(live_runs or [])
-        await self._async_update_tracked_issues(agents)
+        if self.hass.state is CoreState.running:
+            await self._async_update_tracked_issues(agents)
+        # Otherwise Home Assistant is still starting and automations are not
+        # listening yet: replies and status changes that came in while it was
+        # down would fire to nobody, and their cursors would move past them.
+        # They are read once Home Assistant has started (async_setup_entry).
 
         state = PaperclipState(
             health=health,
@@ -769,10 +774,26 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
     ) -> tuple[TrackedIssue, Comment]:
         """Comment on an issue and follow it from now on."""
         tracked = self.tracker.find(issue_ref)
+        if tracked is None:
+            # A board key can open every company its user belongs to, so an
+            # issue this entry does not follow yet must belong to its company
+            # before it is commented on (which wakes the assignee) or tracked.
+            found = await self.client.get_issue(issue_ref)
+            if found.company_id != self.company_id:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="issue_wrong_company",
+                    translation_placeholders={
+                        "issue": issue_ref,
+                        "title": self.config_entry.title,
+                    },
+                )
+            issue_ref = found.id
         comment = await self.client.add_comment(
             tracked.id if tracked else issue_ref, body
         )
         if tracked is None:
+            # Read it again: the comment may have reopened a closed issue.
             issue = await self.client.get_issue(issue_ref)
             tracked = self.tracker.track(
                 issue,

@@ -11,7 +11,7 @@
         },
         "data_description": {
           "url": "The base URL you open Paperclip at, without `/api`.",
-          "api_key": "A board API key (starts with `pcp_board_`), created with `npx paperclipai token board create --never-expires` after `npx paperclipai auth login`. Leave empty for a `local_trusted` server. Agent keys are not supported.",
+          "api_key": "A board API key (starts with `pcp_board_`). On any computer that can reach the server, run `npx paperclipai auth login --api-base SERVER_URL`, then `npx paperclipai token board create --api-base SERVER_URL --never-expires`, with the server URL above as SERVER_URL. Leave empty for a `local_trusted` server. Agent keys are not supported.",
           "verify_ssl": "Turn off only for an HTTPS server with a self-signed certificate."
         }
       },
@@ -221,6 +221,9 @@
     "approval_wrong_company": {
       "message": "That approval does not belong to the Paperclip company of {title}. Use the entry of the company the approval belongs to."
     },
+    "issue_wrong_company": {
+      "message": "Issue {issue} does not belong to the Paperclip company of {title}. Use the entry of the company the issue belongs to."
+    },
     "not_found": {
       "message": "Paperclip could not find it: {error}"
     },
@@ -235,6 +238,9 @@
     },
     "invalid_public_id": {
       "message": "The routine trigger public ID must be 24 lowercase hexadecimal characters, or the trigger's full webhook URL."
+    },
+    "invalid_payload": {
+      "message": "The webhook payload cannot be sent as JSON: {error}"
     },
     "webhook_rejected": {
       "message": "Paperclip rejected the routine webhook (HTTP {status}): {error}"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -383,6 +383,35 @@ async def test_add_comment_tracks_and_waits(
     assert err.value.translation_key == "not_found"
 
 
+async def test_add_comment_on_issue_of_another_company_is_refused(
+    hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
+) -> None:
+    """An issue of another company is neither commented on nor tracked."""
+    foreign_id = "55555555-5555-4555-8555-555555555599"
+    fake.issues[foreign_id] = {
+        **fake.issues[RUNNING_ISSUE_ID],
+        "id": foreign_id,
+        "companyId": OTHER_COMPANY_ID,
+        "identifier": "GLO-3",
+    }
+    for ref in ("GLO-3", foreign_id):
+        with pytest.raises(ServiceValidationError) as err:
+            await _call(
+                hass,
+                "add_comment",
+                {
+                    "config_entry_id": init_integration.entry_id,
+                    "issue": ref,
+                    "message": "Hello",
+                },
+            )
+        assert err.value.translation_key == "issue_wrong_company"
+    assert not fake.calls_to("POST", f"/api/issues/{foreign_id}/comments")
+    assert not fake.calls_to("POST", "/api/issues/GLO-3/comments")
+    tracker = init_integration.runtime_data.coordinator.tracker
+    assert foreign_id not in tracker.issues
+
+
 async def test_wake_agent(
     hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
 ) -> None:
@@ -466,6 +495,47 @@ async def test_fire_routine_webhook_errors(
     }
     # A bad trigger secret must never start a reauth of the board key.
     assert not hass.config_entries.flow.async_progress()
+
+
+async def test_fire_routine_webhook_payload_is_encoded_like_ha(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    fake: FakePaperclip,
+    aioclient_mock: Any,
+) -> None:
+    """YAML dates go out as ISO strings; values JSON cannot hold are refused."""
+    entry_id = init_integration.entry_id
+    await _call(
+        hass,
+        "fire_routine_webhook",
+        {
+            "config_entry_id": entry_id,
+            "public_id": PUBLIC_ID,
+            "secret": "test-secret",
+            "payload": {"when": date(2026, 1, 5), "rooms": ("hall",)},
+        },
+    )
+    _, _, data, headers = aioclient_mock.mock_calls[-1]
+    assert data == b'{"when":"2026-01-05","rooms":["hall"]}'
+    timestamp = headers["X-Paperclip-Timestamp"]
+    expected = hmac.new(
+        b"test-secret", timestamp.encode() + b"." + data, hashlib.sha256
+    ).hexdigest()
+    assert headers["X-Paperclip-Signature"] == f"sha256={expected}"
+
+    calls = len(fake.calls)
+    with pytest.raises(ServiceValidationError) as err:
+        await _call(
+            hass,
+            "fire_routine_webhook",
+            {
+                "config_entry_id": entry_id,
+                "public_id": PUBLIC_ID,
+                "payload": {"blob": object()},
+            },
+        )
+    assert err.value.translation_key == "invalid_payload"
+    assert len(fake.calls) == calls
 
 
 async def test_approvals_gate(

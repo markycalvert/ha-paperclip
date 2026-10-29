@@ -270,7 +270,7 @@ The device's firmware version is the Paperclip server version.
 |---|---|---|
 | Conversation agent | `conversation.home_ops` | Pick it in an Assist pipeline. |
 | Status | `sensor.home_ops_status` | `active`, `idle`, `running`, `paused`, `error`, `pending_approval` or `terminated`. |
-| Current task | `sensor.engineer_current_task` | Identifier and title of the issue the agent's live run works on, or "No current task". Attributes: `run_id`, `run_status`, `issue_id`, `identifier`, `url`. |
+| Current task | `sensor.engineer_current_task` | Identifier and title of the issue the agent's live run works on, or "No current task". A run without an issue (a timer heartbeat, for example) shows its run status (`queued` or `running`); an issue whose title could not be read yet shows its issue id. Attributes: `run_id`, `run_status`, `issue_id`, `identifier`, `url`. |
 | Enabled | `switch.home_ops_enabled` | Off pauses the agent (Paperclip cancels its active runs); on resumes it. |
 | Wake | `button.home_ops_wake` | Starts an on-demand run. |
 | Spend this month | `sensor.home_ops_spend_this_month` | Disabled by default. |
@@ -347,7 +347,7 @@ replies on it fire `paperclip_agent_replied`.
 | Field | Required | Description |
 |---|---|---|
 | `config_entry_id` | yes | The Paperclip entry (company). |
-| `issue` | yes | Issue id or identifier, for example `ACME-12`. |
+| `issue` | yes | Issue id or identifier, for example `ACME-12`. It must belong to the entry's company. |
 | `message` | yes | Comment text (Markdown). |
 | `wait_for_reply` | no | Seconds to wait for an agent comment posted after yours (0 to 300). Only used with `response_variable`. |
 
@@ -454,7 +454,9 @@ Response: `approval_id`, `status`.
 ## Events
 
 Every event carries `config_entry_id` and `company_id`. Payloads contain ids
-and short titles only, never full descriptions.
+and short titles, never issue descriptions. The one exception is
+`paperclip_agent_replied`, which carries the first 2000 characters of the
+agent's reply.
 
 ### `paperclip_agent_replied`
 
@@ -585,7 +587,12 @@ automation whenever you want fresh data (see
   Paperclip as an issue and comments, and Paperclip passes it to whichever AI
   model that agent uses. Home Assistant stores the key and URL in its config
   entry storage and the ids and titles of followed issues in
-  `.storage/paperclip.<entry id>`.
+  `.storage/paperclip.<entry id>`. Agent replies (up to 2000 characters) are
+  also kept by Home Assistant itself: the recorder stores the
+  `paperclip_agent_replied` event with its `body` in the event history, and an
+  action that returns a reply keeps it in the automation or script trace.
+  Exclude the event from the recorder if you do not want reply text in the
+  database.
 - Diagnostics redact the key, the URL, names, titles and comment bodies.
 - Use `https://` if Home Assistant reaches Paperclip over an untrusted network.
 

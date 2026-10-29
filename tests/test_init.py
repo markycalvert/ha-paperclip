@@ -8,7 +8,8 @@ from datetime import timedelta
 import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.setup import async_setup_component
@@ -23,6 +24,7 @@ from custom_components.paperclip.const import (
     CONF_DEFAULT_PROJECT,
     DOMAIN,
     EVENT_AGENT_REPLIED,
+    EVENT_ISSUE_STATUS_CHANGED,
 )
 
 from .conftest import COMPANY_ID, ENGINEER_ID, HOME_OPS_ID, PROJECT_ID, FakePaperclip
@@ -233,6 +235,94 @@ async def test_remove_config_entry_device(
         identifiers={(DOMAIN, "33333333-3333-4333-8333-000000000000")},
     )
     assert await async_remove_config_entry_device(hass, init_integration, stale)
+
+
+async def test_remove_device_of_entry_that_is_not_loaded(
+    hass: HomeAssistant, fake: FakePaperclip, mock_config_entry: MockConfigEntry
+) -> None:
+    """Without a loaded entry there is no agent list, so removal is allowed."""
+    fake.fail("GET", "/api/health", 503, "database_unreachable")
+    mock_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=mock_config_entry.entry_id,
+        identifiers={(DOMAIN, ENGINEER_ID)},
+    )
+    assert await async_remove_config_entry_device(hass, mock_config_entry, device)
+
+    fake.clear_failures()
+    await hass.config_entries.async_reload(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert mock_config_entry.state is ConfigEntryState.LOADED
+    assert not await async_remove_config_entry_device(hass, mock_config_entry, device)
+    assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert await async_remove_config_entry_device(hass, mock_config_entry, device)
+
+
+async def test_page_instead_of_agent_list_keeps_devices(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    fake: FakePaperclip,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A 200 that is not an agent list fails the poll; no device is removed."""
+    fake.overrides[("GET", f"/api/companies/{COMPANY_ID}/agents")] = (
+        200,
+        "<html><body>Sign in to the network</body></html>",
+    )
+    freezer.tick(timedelta(seconds=61))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    coordinator = init_integration.runtime_data.coordinator
+    assert not coordinator.last_update_success
+    assert _device(hass, ENGINEER_ID) is not None
+    assert _device(hass, HOME_OPS_ID) is not None
+    assert hass.states.get("switch.home_ops_enabled").state == "unavailable"
+
+
+async def test_events_from_downtime_wait_for_startup(
+    hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
+) -> None:
+    """Replies and status changes from while HA was down fire once it started."""
+    replies = async_capture_events(hass, EVENT_AGENT_REPLIED)
+    statuses = async_capture_events(hass, EVENT_ISSUE_STATUS_CHANGED)
+    response = await hass.services.async_call(
+        DOMAIN,
+        "ask_agent",
+        {"agent": "Engineer", "message": "Check the backups"},
+        blocking=True,
+        return_response=True,
+    )
+    assert isinstance(response, dict)
+    issue_id = response["issue_id"]
+    entry_id = init_integration.entry_id
+    assert await hass.config_entries.async_unload(entry_id)
+    await hass.async_block_till_done()
+
+    # Home Assistant is down; the agent answers and closes the issue.
+    fake.agent_comment(issue_id, ENGINEER_ID, "Backups are fine.")
+    fake.set_issue_status(issue_id, "done")
+
+    # Home Assistant starts again: automations are not listening yet.
+    hass.set_state(CoreState.not_running)
+    try:
+        assert await hass.config_entries.async_setup(entry_id)
+        await hass.async_block_till_done()
+        assert init_integration.state is ConfigEntryState.LOADED
+        assert not replies
+        assert not statuses
+    finally:
+        hass.set_state(CoreState.running)
+
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert [event.data["body"] for event in replies] == ["Backups are fine."]
+    assert [
+        (event.data["issue_id"], event.data["new_status"]) for event in statuses
+    ] == [(issue_id, "done")]
 
 
 async def test_options_flow_lists_projects(

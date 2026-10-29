@@ -281,10 +281,6 @@ async def test_reconfigure_flow(
     assert mock_config_entry.data[CONF_API_KEY] == API_KEY
     assert mock_config_entry.data[CONF_VERIFY_SSL] is False
     assert len(hass.config_entries.async_entries(DOMAIN)) == 1
-    # The reload set the entry up in the background; unload it so its polling
-    # timer does not outlive the test.
-    await hass.async_block_till_done()
-    await hass.config_entries.async_unload(mock_config_entry.entry_id)
 
 
 async def test_reconfigure_wrong_company(
@@ -322,10 +318,6 @@ async def test_options_flow(
         CONF_ALLOW_APPROVALS: True,
         CONF_DEFAULT_PROJECT: PROJECT_ID,
     }
-    # Saving the options reloads the entry; unload it so its polling timer
-    # does not outlive the test.
-    await hass.async_block_till_done()
-    await hass.config_entries.async_unload(mock_config_entry.entry_id)
 
 
 async def test_options_flow_resolves_typed_project(

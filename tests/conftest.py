@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import re
-from collections.abc import Callable, Generator
+from collections.abc import AsyncGenerator, Callable, Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import aiohttp
 import pytest
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import (
     CONF_API_KEY,
     CONF_URL,
@@ -396,6 +397,21 @@ def auto_enable_custom_integrations(
 async def setup_homeassistant(hass: HomeAssistant) -> None:
     """Set up the core integration that conversation agents depend on."""
     assert await async_setup_component(hass, "homeassistant", {})
+
+
+@pytest.fixture(autouse=True)
+async def unload_loaded_entries(hass: HomeAssistant) -> AsyncGenerator[None]:
+    """
+    Unload every Paperclip entry a test left loaded.
+
+    Flows that reload an entry (reauth, reconfigure, options) set it up in the
+    background; without this its polling timer outlives the test.
+    """
+    yield
+    await hass.async_block_till_done()
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if entry.state is ConfigEntryState.LOADED:
+            await hass.config_entries.async_unload(entry.entry_id)
 
 
 @pytest.fixture(autouse=True)

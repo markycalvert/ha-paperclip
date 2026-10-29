@@ -46,8 +46,7 @@
           "running": "mdi:robot-excited",
           "paused": "mdi:pause-circle-outline",
           "error": "mdi:robot-dead",
-          "pending_approval": "mdi:account-clock",
-          "terminated": "mdi:robot-off"
+          "pending_approval": "mdi:account-clock"
         }
       }
     },

@@ -52,13 +52,16 @@ ISSUE_PAGE_SIZE: Final = 500
 # one was already listed. Re-reading is harmless (statuses are diffed).
 ISSUE_UPDATE_OVERLAP: Final = timedelta(seconds=60)
 MAX_ISSUE_PAGES: Final = 10
+# An optional route that answered Paperclip's own 404 is tried again after this.
+UNSUPPORTED_ROUTE_RETRY: Final = timedelta(hours=1)
 ISSUE_CACHE_SIZE: Final = 256
 
 TITLE_MAX_LENGTH: Final = 60
 EVENT_TITLE_MAX_LENGTH: Final = 120
 REPLY_MAX_LENGTH: Final = 2000
 
-# Paperclip enums (packages/shared/src/constants.ts)
+# Paperclip enums (packages/shared/src/constants.ts). The agent list leaves out
+# terminated agents (their devices are removed), so no sensor reports it.
 AGENT_STATUSES: Final = [
     "active",
     "idle",
@@ -66,7 +69,6 @@ AGENT_STATUSES: Final = [
     "paused",
     "error",
     "pending_approval",
-    "terminated",
 ]
 ISSUE_PRIORITIES: Final = ["critical", "high", "medium", "low"]
 CLOSED_ISSUE_STATUSES: Final = frozenset({"done", "cancelled"})

@@ -103,6 +103,10 @@ class FakePaperclip:
         """Make one route answer with an error."""
         self.overrides[(method, path)] = (status, {"error": error})
 
+    def proxy_not_found(self, method: str, path: str) -> None:
+        """Make one route answer a reverse proxy's plain-text 404."""
+        self.overrides[(method, path)] = (404, b"404 page not found\n")
+
     def disconnect(self, method: str, path: str) -> None:
         """Make one route fail at the transport level."""
         self.overrides[(method, path)] = (0, None)
@@ -371,6 +375,10 @@ class FakePaperclip:
         if status == 0:
             msg = "Connection refused"
             raise aiohttp.ClientConnectionError(msg)
+        if isinstance(payload, bytes):
+            return AiohttpClientMockResponse(
+                method, url, status=status, text=payload.decode()
+            )
         return AiohttpClientMockResponse(
             method, url, status=status, json=copy.deepcopy(payload)
         )

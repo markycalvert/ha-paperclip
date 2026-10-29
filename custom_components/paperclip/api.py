@@ -75,7 +75,18 @@ class PaperclipHostnameNotAllowedError(PaperclipResponseError):
 
 
 class PaperclipNotFoundError(PaperclipResponseError):
-    """The resource or route does not exist (404)."""
+    """
+    The resource or route does not exist (404).
+
+    ``from_paperclip`` is False when the body is not Paperclip's JSON error:
+    a reverse proxy answers 404 with its own page while the server restarts,
+    so such a 404 says nothing about the route.
+    """
+
+    def __init__(self, status: int, message: str, *, from_paperclip: bool) -> None:
+        """Store whether the 404 came with Paperclip's own error body."""
+        super().__init__(status, message)
+        self.from_paperclip = from_paperclip
 
 
 class PaperclipRateLimitError(PaperclipResponseError):
@@ -514,7 +525,12 @@ class PaperclipClient:
                 raise PaperclipHostnameNotAllowedError(status, message)
             raise PaperclipForbiddenError(status, message)
         if status == 404:  # noqa: PLR2004
-            raise PaperclipNotFoundError(status, message)
+            raise PaperclipNotFoundError(
+                status,
+                message,
+                from_paperclip=isinstance(payload, dict)
+                and isinstance(payload.get("error"), str),
+            )
         if status == 429:  # noqa: PLR2004
             raise PaperclipRateLimitError(
                 status, message, _retry_after(headers, payload)

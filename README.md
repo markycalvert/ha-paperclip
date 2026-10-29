@@ -81,7 +81,10 @@ What happens:
   while it is in use: after about 5 minutes without a message, the next
   message starts a new conversation, and so a new issue. Within those
   minutes, even an unrelated request to the same agent from the same device
-  is added to the open issue.
+  is added to the open issue. A `conversation_id` you choose yourself (for
+  example in `conversation.process`) is kept by Home Assistant after those 5
+  minutes, so with it follow-ups continue the same issue until 15 minutes
+  pass without a message.
 - Assist waits up to the **conversation reply wait** (default 20 s) for the
   agent's comment and speaks it. If the agent is slower, Assist answers
   "Sent to Home Ops as ACME-12. The reply will be in Paperclip." The reply
@@ -168,8 +171,12 @@ The comment continues the same issue, so the agent sees the whole thread.
 - A Paperclip server that Home Assistant can reach, for example
   `http://paperclip.local:3100`.
 - A **board API key** (it starts with `pcp_board_`) for a user who is a member
-  of the company, with a role other than `viewer` if you want to create issues
-  or pause agents. Agent API keys are not supported.
+  of the company. Agent API keys are not supported. What the user may do
+  depends on its role in the company:
+  - any role other than `viewer` creates issues, comments and wakes agents;
+  - pausing and resuming agents (the **Enabled** switch) needs the `owner` or
+    `admin` role (Paperclip's `agents:create` permission), or an instance
+    admin. With the `operator` role the switch fails with a 403.
 
   Paperclip has no web page for board keys. Create one with the Paperclip CLI
   (Node.js), on any computer that can reach the server. Log in as that user
@@ -269,7 +276,7 @@ The device's firmware version is the Paperclip server version.
 | Entity | Example | Notes |
 |---|---|---|
 | Conversation agent | `conversation.home_ops` | Pick it in an Assist pipeline. |
-| Status | `sensor.home_ops_status` | `active`, `idle`, `running`, `paused`, `error`, `pending_approval` or `terminated`. |
+| Status | `sensor.home_ops_status` | `active`, `idle`, `running`, `paused`, `error` or `pending_approval`. A terminated agent does not report a status: it disappears from Paperclip's agent list and loses its device. |
 | Current task | `sensor.engineer_current_task` | Identifier and title of the issue the agent's live run works on, or "No current task". A run without an issue (a timer heartbeat, for example) shows its run status (`queued` or `running`); an issue whose title could not be read yet shows its issue id. Attributes: `run_id`, `run_status`, `issue_id`, `identifier`, `url`. |
 | Enabled | `switch.home_ops_enabled` | Off pauses the agent (Paperclip cancels its active runs); on resumes it. |
 | Wake | `button.home_ops_wake` | Starts an on-demand run. |
@@ -277,7 +284,9 @@ The device's firmware version is the Paperclip server version.
 | Last heartbeat | `sensor.home_ops_last_heartbeat` | Diagnostic, disabled by default. |
 
 The device model is the agent's title, or its role. New agents appear
-automatically; agents that are terminated in Paperclip lose their device.
+automatically; agents that are terminated in Paperclip lose their device, so
+neither the Status sensor nor `paperclip_agent_status_changed` ever reports
+`terminated`.
 
 ## Actions
 
@@ -402,10 +411,11 @@ the wake into existing work). A paused agent cannot be woken.
 
 ### `paperclip.fire_routine_webhook`
 
-Fires a Paperclip routine's webhook trigger. The request is signed with
-HMAC-SHA256 over `"<unix time in milliseconds>.<raw body>"` and sent with the headers
-`X-Paperclip-Timestamp` and `X-Paperclip-Signature: sha256=<hex>`. The board
-API key is **not** sent; only the trigger's own secret counts.
+Fires a Paperclip routine's webhook trigger. With a `secret`, the request is
+signed with HMAC-SHA256 over `"<unix time in milliseconds>.<raw body>"` and
+sent with the headers `X-Paperclip-Timestamp` and
+`X-Paperclip-Signature: sha256=<hex>`; without one it is sent unsigned. The
+board API key is **not** sent; only the trigger's own secret counts.
 
 | Field | Required | Description |
 |---|---|---|
@@ -435,6 +445,13 @@ in Paperclip, when no run starts and `run_id` and `linked_issue_id` are empty),
 error with the HTTP status. Paperclip's default signing mode for new webhook
 triggers is `bearer`; this action supports `hmac_sha256` (and unsigned
 triggers), so switch the trigger to HMAC.
+
+> **The secret is action data.** Home Assistant has no way to mark an action
+> field as sensitive, so the secret is stored like any other action data: in
+> the recorder's `call_service` event and in the automation or script trace.
+> `!secret` only keeps it out of your YAML files; Home Assistant resolves it
+> when the YAML loads, and the plain value is what the action receives. See
+> [Security notes](#security-notes).
 
 ### `paperclip.approve` and `paperclip.reject`
 
@@ -509,8 +526,9 @@ data:
 
 ### `paperclip_approval_requested`
 
-A new pending approval appeared since the last poll (approvals that were
-already pending when Home Assistant started do not fire).
+A new pending approval appeared since the last poll. Approvals that were
+already pending when the entry was set up (Home Assistant started, or the
+entry was reloaded) do not fire.
 
 ```yaml
 data:
@@ -577,7 +595,10 @@ automation whenever you want fresh data (see
   create and change issues, pause agents, change agent configuration and decide
   approvals in every company the user belongs to. Create a dedicated Paperclip
   user for Home Assistant if you want to limit that, give it only the companies
-  it needs, and revoke the key in Paperclip if it leaks.
+  it needs, and revoke the key in Paperclip if it leaks. The `operator` role
+  is enough to create issues, comment and wake agents; the **Enabled** switch
+  (pause and resume) needs `owner` or `admin` (see
+  [Requirements](#requirements)).
 - **Approvals are off by default.** Turning them on lets anyone who can run
   actions in Home Assistant (including automations and any LLM agent that may
   call actions) approve hires, strategies and budget overrides in that entry's
@@ -592,7 +613,11 @@ automation whenever you want fresh data (see
   `paperclip_agent_replied` event with its `body` in the event history, and an
   action that returns a reply keeps it in the automation or script trace.
   Exclude the event from the recorder if you do not want reply text in the
-  database.
+  database. A routine webhook `secret` is action data, so the recorder stores
+  it in the `call_service` event and the automation or script trace keeps it
+  too, even when it comes from `!secret`. Exclude `call_service` from the
+  recorder (`recorder:` → `exclude:` → `event_types:`) if that matters to
+  you; traces keep it regardless.
 - Diagnostics redact the key, the URL, names, titles and comment bodies.
 - Use `https://` if Home Assistant reaches Paperclip over an untrusted network.
 
@@ -607,12 +632,16 @@ automation whenever you want fresh data (see
   progress note first, that note is the reply that is returned or spoken.
 - Spend is reported in USD, as Paperclip records it, for the current UTC month.
 - A 403 from Paperclip on an action (for example a read-only membership, or a
-  key without the grant to wake an agent) is reported as an error with
-  Paperclip's reason; it does not ask you to re-authenticate.
-- Approval events only fire for approvals that appear while Home Assistant is
-  running.
+  role that cannot pause agents) is reported as an error with Paperclip's
+  reason; it does not ask you to re-authenticate.
+- Approval events only fire for approvals that appear while the entry is
+  loaded. Reloading the entry (saving options, reconfiguring,
+  re-authenticating, a manual reload) takes a new baseline, so an approval or
+  agent status change that happens during the reload does not fire an event.
 - An Assist conversation continues the same issue only while Home Assistant
-  keeps the conversation (about 5 minutes without a message).
+  keeps the conversation (about 5 minutes without a message). With a
+  `conversation_id` you choose yourself, it continues until 15 minutes pass
+  without a message.
 - Routine webhooks are supported in `hmac_sha256` and unsigned modes, not
   `bearer`.
 
@@ -648,8 +677,16 @@ automation whenever you want fresh data (see
 2. If you installed with HACS, remove the repository in HACS; otherwise delete
    `<config>/custom_components/paperclip`.
 3. Restart Home Assistant.
-4. Revoke the board API key in Paperclip if you no longer need it
-   (`npx paperclipai token board revoke <key id>` or `DELETE /api/board-api-keys/<key id>`).
+4. Revoke the board API key in Paperclip if you no longer need it. Find its
+   id, then revoke it (use your server's address, as in
+   [Requirements](#requirements)):
+
+   ```bash
+   npx paperclipai token board list --api-base http://paperclip.local:3100
+   npx paperclipai token board revoke <key id> --api-base http://paperclip.local:3100
+   ```
+
+   Calling `DELETE /api/board-api-keys/<key id>` works too.
 
 ## Compatibility
 

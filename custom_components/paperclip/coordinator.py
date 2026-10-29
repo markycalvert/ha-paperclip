@@ -17,6 +17,7 @@ from homeassistant.core import CoreState, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import (
     Agent,
@@ -56,6 +57,7 @@ from .const import (
     PLACEHOLDER_PAPERCLIP_VERSIONS,
     REPLY_MAX_LENGTH,
     REPLY_POLL_INTERVAL,
+    UNSUPPORTED_ROUTE_RETRY,
 )
 
 if TYPE_CHECKING:
@@ -209,7 +211,8 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
         self.tracker = tracker
         self.company_id: str = entry.data[CONF_COMPANY_ID]
         self.issue_prefix: str = ""
-        self.unsupported: set[str] = set()
+        # Optional routes the server answered 404 to, and when to try again.
+        self.unsupported: dict[str, datetime] = {}
         self._issue_cache: OrderedDict[str, tuple[str | None, str]] = OrderedDict()
         self._waiting: Counter[str] = Counter()
         self._locks: dict[str, asyncio.Lock] = {}
@@ -290,14 +293,36 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
     async def _optional[T](
         self, name: str, fetch: Callable[[], Awaitable[T]]
     ) -> T | None:
-        """Call a route that older or newer servers may not have."""
-        if name in self.unsupported:
-            return None
+        """
+        Call a route that older or newer servers may not have.
+
+        Paperclip's own 404 skips the route for UNSUPPORTED_ROUTE_RETRY, so a
+        server upgrade is picked up without a reload. A 404 without
+        Paperclip's error body (a reverse proxy while the server restarts)
+        only skips this poll.
+        """
+        retry_at = self.unsupported.get(name)
+        if retry_at is not None:
+            if dt_util.utcnow() < retry_at:
+                return None
+            del self.unsupported[name]
         try:
             return await fetch()
-        except PaperclipNotFoundError:
-            LOGGER.debug("Paperclip route for %s is not available; skipping it", name)
-            self.unsupported.add(name)
+        except PaperclipNotFoundError as err:
+            if not err.from_paperclip:
+                LOGGER.debug(
+                    "Paperclip route for %s answered a 404 that is not Paperclip's "
+                    "(%s); trying it again next poll",
+                    name,
+                    err,
+                )
+                return None
+            LOGGER.debug(
+                "Paperclip route for %s is not available; skipping it for %s",
+                name,
+                UNSUPPORTED_ROUTE_RETRY,
+            )
+            self.unsupported[name] = dt_util.utcnow() + UNSUPPORTED_ROUTE_RETRY
             return None
 
     async def _async_fetch(self) -> PaperclipState:
@@ -420,8 +445,13 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
         """
         Read every page of issues updated after ``since``.
 
-        Return the rows and whether the list was read to the end, or None if
-        the server does not support the route.
+        Return the rows and whether they can be trusted to hold every issue
+        changed since then, or None if the route could not be read. Only a
+        single short page can: the list is ordered by activity and paged by
+        offset, so an issue that gets new activity while the pages are read
+        moves to the end and shifts the rest up, and a row can slip from one
+        page to the one already read. Several pages, or more pages than
+        MAX_ISSUE_PAGES, need the tracked issues re-read.
         """
         rows: list[Issue] = []
         for page in range(MAX_ISSUE_PAGES):
@@ -439,7 +469,7 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
                 return None
             rows.extend(batch)
             if len(batch) < ISSUE_PAGE_SIZE:
-                return rows, True
+                return rows, page == 0
         return rows, False
 
     async def _async_follow_issue_statuses(self, since: datetime) -> None:
@@ -453,12 +483,14 @@ class PaperclipCoordinator(DataUpdateCoordinator[PaperclipState]):
         for issue in rows:
             self._note_issue_status(issue)
         if not complete:
-            # More issues changed than the pages read (a long outage, or a busy
-            # company). The list is ordered by activity, not by updatedAt, so
-            # the newest updatedAt seen does not cover the rows left out. Read
-            # the tracked issues themselves; only then may the cursor move.
+            # More issues changed than one page holds (a long outage, or a busy
+            # company). The list is ordered by activity, not by updatedAt, and
+            # rows can shift between pages, so the newest updatedAt seen does
+            # not cover the rows left out. Read the tracked issues themselves;
+            # only then may the cursor move.
             LOGGER.debug(
-                "More than %s issues changed since %s; re-reading tracked issues",
+                "%s issues changed since %s, more than one page; "
+                "re-reading tracked issues",
                 len(rows),
                 since,
             )

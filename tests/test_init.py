@@ -134,7 +134,65 @@ async def test_optional_routes_missing(
     assert hass.states.get("sensor.acme_spend_this_month").state == "12.34"
     assert hass.states.get("sensor.acme_pending_approvals").state == "1"
     coordinator = mock_config_entry.runtime_data.coordinator
-    assert coordinator.unsupported == {"dashboard", "live_runs"}
+    assert set(coordinator.unsupported) == {"dashboard", "live_runs"}
+
+
+async def test_unsupported_route_is_tried_again(
+    hass: HomeAssistant,
+    fake: FakePaperclip,
+    mock_config_entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Paperclip's own 404 skips a route for an hour, then it is tried again."""
+    path = f"/api/companies/{COMPANY_ID}/dashboard"
+    fake.fail("GET", path, 404, "API route not found")
+    mock_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = mock_config_entry.runtime_data.coordinator
+    assert set(coordinator.unsupported) == {"dashboard"}
+    assert len(fake.calls_to("GET", path)) == 1
+
+    # The server is upgraded; within the hour the route is still skipped.
+    fake.clear_failures()
+    freezer.tick(timedelta(seconds=61))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(fake.calls_to("GET", path)) == 1
+    assert hass.states.get("sensor.acme_open_issues").state == "unavailable"
+
+    freezer.tick(timedelta(hours=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(fake.calls_to("GET", path)) == 2
+    assert coordinator.unsupported == {}
+    assert hass.states.get("sensor.acme_open_issues").state != "unavailable"
+
+
+async def test_proxy_404_does_not_mark_route_unsupported(
+    hass: HomeAssistant,
+    fake: FakePaperclip,
+    init_integration: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A 404 that is not Paperclip's (a proxy mid-restart) only skips one poll."""
+    coordinator = init_integration.runtime_data.coordinator
+    dashboard = f"/api/companies/{COMPANY_ID}/dashboard"
+    approvals = f"/api/companies/{COMPANY_ID}/approvals"
+    fake.proxy_not_found("GET", dashboard)
+    fake.proxy_not_found("GET", approvals)
+    await coordinator.async_refresh()
+    assert coordinator.last_update_success
+    assert coordinator.unsupported == {}
+    assert hass.states.get("sensor.acme_open_issues").state == "unavailable"
+
+    fake.clear_failures()
+    freezer.tick(timedelta(seconds=61))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert coordinator.unsupported == {}
+    assert hass.states.get("sensor.acme_open_issues").state != "unavailable"
+    assert hass.states.get("sensor.acme_pending_approvals").state == "1"
 
 
 async def test_outdated_server_raises_repair_issue(

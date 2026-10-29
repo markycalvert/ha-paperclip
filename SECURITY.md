@@ -23,8 +23,11 @@ Problems in the Paperclip server itself belong to the
   credentials. They are redacted from diagnostics.
 - The key is sent only to the Paperclip server you configured, as an
   `Authorization: Bearer` header. It is never sent with routine webhooks.
-- Routine webhook secrets are passed in the action call and used only to sign
-  that request. They are not stored by the integration.
+- Routine webhook secrets are passed in the action call and used to sign that
+  request. The integration does not save them, but Home Assistant has no way
+  to mark action data as sensitive: the secret is written to the recorder's
+  `call_service` event (unless that event type is excluded) and to the
+  automation or script trace, also when it comes from `!secret`.
 - Issue ids, titles, statuses and conversation-to-issue links are stored in
   `.storage/paperclip.<entry id>` so replies can be matched after a restart.
 - Agent reply text (up to 2000 characters) is put on Home Assistant's event bus

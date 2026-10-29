@@ -280,6 +280,40 @@ async def test_issue_updates_read_every_page(
     assert all(call[2]["limit"] == "2" for call in pages)
 
 
+async def test_issue_updates_shifting_between_pages(
+    hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
+) -> None:
+    """A row that slips onto an already-read page is caught by the re-read."""
+    coordinator = init_integration.runtime_data.coordinator
+    statuses = async_capture_events(hass, EVENT_ISSUE_STATUS_CHANGED)
+    first, second, third = await _track_three(hass, init_integration)
+    cursor = coordinator.tracker.cursor
+    # By activity: first, second | third. updatedAt: third < second < first.
+    for issue_id, activity in ((third, "3"), (second, "2"), (first, "1")):
+        fake.set_issue_status(issue_id, "in_review")
+        fake.issues[issue_id]["lastActivityAt"] = activity
+    list_path = f"/api/companies/{COMPANY_ID}/issues"
+    original = fake._route
+
+    def route(method: str, path: str, query: dict[str, str], body: Any) -> Any:
+        result = original(method, path, query, body)
+        if method == "GET" and path == list_path and "offset" not in query:
+            # New activity on first while the pages are read: it moves to the
+            # end, and third slips onto page one, which was already read.
+            fake.issues[first]["lastActivityAt"] = "9"
+        return result
+
+    fake._route = route  # type: ignore[method-assign]
+    with patch("custom_components.paperclip.coordinator.ISSUE_PAGE_SIZE", 2):
+        await coordinator.async_refresh()
+    pages = fake.calls_to("GET", list_path)
+    assert [call[2].get("offset") for call in pages] == [None, "2"]
+    assert {event.data["issue_id"] for event in statuses} == {first, second, third}
+    assert coordinator.tracker.cursor is not None
+    assert cursor is not None
+    assert coordinator.tracker.cursor > cursor
+
+
 async def test_issue_updates_beyond_the_page_limit(
     hass: HomeAssistant, init_integration: MockConfigEntry, fake: FakePaperclip
 ) -> None:

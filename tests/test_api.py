@@ -19,6 +19,7 @@ from custom_components.paperclip.api import (
     PaperclipClient,
     PaperclipConnectionError,
     PaperclipInvalidResponseError,
+    PaperclipNotFoundError,
     PaperclipRateLimitError,
     PaperclipResponseError,
     is_agent_key,
@@ -138,6 +139,29 @@ async def test_webhook_transport_error(
     client = PaperclipClient(async_get_clientsession(hass), BASE_URL)
     with pytest.raises(PaperclipConnectionError):
         await client.fire_routine_webhook(PUBLIC_ID, {}, secret="s")
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "from_paperclip"),
+    [
+        ({"json": {"error": "API route not found"}}, True),
+        ({"text": "404 page not found\n"}, False),
+        ({"text": "<html><body>Not Found</body></html>"}, False),
+        ({"json": {"message": "Not Found"}}, False),
+    ],
+)
+async def test_not_found_tells_paperclip_from_a_proxy(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    kwargs: dict[str, Any],
+    from_paperclip: bool,
+) -> None:
+    """Only a 404 with Paperclip's JSON error body says the route is missing."""
+    aioclient_mock.get(f"{BASE_URL}/api/health", status=404, **kwargs)
+    client = PaperclipClient(async_get_clientsession(hass), BASE_URL)
+    with pytest.raises(PaperclipNotFoundError) as err:
+        await client.get_health()
+    assert err.value.from_paperclip is from_paperclip
 
 
 async def test_non_json_and_no_key(

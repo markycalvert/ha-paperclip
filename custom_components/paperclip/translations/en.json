@@ -164,8 +164,7 @@
           "running": "Running",
           "paused": "Paused",
           "error": "Error",
-          "pending_approval": "Pending approval",
-          "terminated": "Terminated"
+          "pending_approval": "Pending approval"
         }
       }
     },
@@ -372,7 +371,7 @@
     },
     "fire_routine_webhook": {
       "name": "Fire routine webhook",
-      "description": "Fires a Paperclip routine's webhook trigger, signed with HMAC-SHA256. The board API key is not sent.",
+      "description": "Fires a Paperclip routine's webhook trigger, HMAC-SHA256 signed when a secret is given (unsigned otherwise). The board API key is not sent.",
       "fields": {
         "config_entry_id": {
           "name": "Paperclip entry",
